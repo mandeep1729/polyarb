@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    user: root
+    environment:
+      POSTGRES_USER: polyarb
+      POSTGRES_PASSWORD: polyarb
+      POSTGRES_DB: polyarb
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./logs/postgres:/var/log/postgresql
+    entrypoint:
+      - bash
+      - -c
+      - |
+        chown -R postgres:postgres /var/log/postgresql
+        chown -R postgres:postgres /var/lib/postgresql/data
+        exec gosu postgres docker-entrypoint.sh \
+          postgres \
+          -c logging_collector=on \
+          -c log_directory=/var/log/postgresql \
+          -c "log_filename=postgresql-%Y-%m-%d.log" \
+          -c log_rotation_age=1d \
+          -c log_rotation_size=50MB \
+          -c log_truncate_on_rotation=off \
+          -c log_min_duration_statement=200 \
+          -c log_statement=ddl \
+          -c log_connections=on \
+          -c log_disconnections=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polyarb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - ./data/redis:/data
+      - ./logs/redis:/var/log/redis
+    entrypoint:
+      - sh
+      - -c
+      - |
+        chmod 777 /var/log/redis /data
+        exec redis-server \
+          --loglevel notice \
+          --logfile /var/log/redis/redis.log
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://polyarb:polyarb@postgres/polyarb"
+      REDIS_URL: "redis://redis:6379"
+      LOG_LEVEL: "INFO"
+      LOG_DIR: "/app/logs"
+    volumes:
+      - ./logs/backend:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://backend:8000"
+    depends_on:
+      - backend
