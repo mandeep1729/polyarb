@@ -129,6 +129,31 @@ class PolymarketConnector(BaseConnector):
                 logger.error("polymarket_ws_error", error=str(exc))
                 await asyncio.sleep(10)
 
+    async def fetch_price_history(
+        self, token_id: str, start_ts: int, end_ts: int
+    ) -> list[dict]:
+        """Fetch hourly price history for a single token.
+
+        Returns list of {"t": unix_timestamp, "p": price_float}.
+        """
+        client = await self._get_client()
+        response = await self._retry(
+            lambda: client.get(
+                f"{self._clob_url}/prices-history",
+                params={
+                    "market": token_id,
+                    "interval": "1h",
+                    "startTs": start_ts,
+                    "endTs": end_ts,
+                    "fidelity": 60,
+                },
+            )
+        )
+        data = response.json()
+        if not isinstance(data, dict):
+            return []
+        return data.get("history", [])
+
     async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
         """Search Polymarket events API using _q parameter, return flattened markets."""
         try:

@@ -205,6 +205,26 @@ class KalshiConnector:
 
         return results
 
+    async def fetch_price_history(
+        self, ticker: str, start_ts: int, end_ts: int
+    ) -> list[dict]:
+        """Fetch hourly candlestick data for a single market.
+
+        Returns list of candlestick dicts with yes/no prices.
+        """
+        url = f"{settings.KALSHI_API_URL}/markets/{ticker}/candlesticks"
+
+        def _fetch():
+            req = urllib.request.Request(
+                f"{url}?start_ts={start_ts}&end_ts={end_ts}&period_interval=60",
+                headers={"Accept": "application/json"},
+            )
+            resp = urllib.request.urlopen(req, timeout=30)
+            return json.loads(resp.read())
+
+        data = await asyncio.to_thread(_fetch)
+        return data.get("candlesticks", [])
+
     async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
         """Search by scanning event titles, then fetching nested markets."""
         query_lower = query.lower().strip()

@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     MATCH_MARKETS_INTERVAL_SECONDS: int = 900
     CLEANUP_INTERVAL_SECONDS: int = 3600
     GROUP_MARKETS_INTERVAL_SECONDS: int = 600
+    GROUP_FULL_REGROUP_INTERVAL_SECONDS: int = 7200
     GROUP_MERGE_THRESHOLD: float = 0.70
+    BACKFILL_PRICES_INTERVAL_SECONDS: int = 86400
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
