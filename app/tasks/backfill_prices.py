@@ -17,6 +17,25 @@ logger = structlog.get_logger()
 CHUNK_SIZE = 1000
 
 
+def _kalshi_close_dollars(candle: dict, *keys: str) -> float | None:
+    """Extract close_dollars from nested Kalshi candlestick objects.
+
+    Tries each key in order (e.g. "price", "yes_bid"), returning the
+    first non-None close_dollars value as a float.
+    """
+    for key in keys:
+        obj = candle.get(key)
+        if not isinstance(obj, dict):
+            continue
+        val = obj.get("close_dollars")
+        if val is not None:
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                continue
+    return None
+
+
 def _round_to_hour(ts: int) -> datetime:
     """Round a unix timestamp down to the nearest hour boundary."""
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
@@ -186,34 +205,17 @@ async def _backfill_kalshi(db, platform_id: int) -> int:
 
             rows = []
             for candle in candlesticks:
-                ts = candle.get("end_period_ts") or candle.get("start_period_ts")
+                ts = candle.get("end_period_ts")
                 if ts is None:
                     continue
 
-                # Use close prices; Kalshi reports yes/no as cents (0-100)
-                close_yes = candle.get("yes_close") or candle.get("close")
-                close_no = candle.get("no_close")
+                # Extract Yes price: prefer trade price, fall back to yes_bid
+                yes_price = _kalshi_close_dollars(candle, "price", "yes_bid")
 
                 prices: dict[str, float] = {}
-                if close_yes is not None:
-                    try:
-                        yval = float(close_yes)
-                        # Normalize cents to dollars if > 1
-                        prices["Yes"] = round(yval / 100, 4) if yval > 1 else round(yval, 4)
-                    except (ValueError, TypeError):
-                        pass
-                if close_no is not None:
-                    try:
-                        nval = float(close_no)
-                        prices["No"] = round(nval / 100, 4) if nval > 1 else round(nval, 4)
-                    except (ValueError, TypeError):
-                        pass
-
-                # Infer No from Yes if missing
-                if "Yes" in prices and "No" not in prices:
-                    prices["No"] = round(1.0 - prices["Yes"], 4)
-                elif "No" in prices and "Yes" not in prices:
-                    prices["Yes"] = round(1.0 - prices["No"], 4)
+                if yes_price is not None:
+                    prices["Yes"] = round(yes_price, 4)
+                    prices["No"] = round(1.0 - yes_price, 4)
 
                 if not prices:
                     continue
