@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 
 import httpx
 import structlog
@@ -15,8 +15,8 @@ logger = structlog.get_logger()
 class PolymarketConnector(BaseConnector):
     def __init__(self) -> None:
         super().__init__(
-            max_concurrent=25,
-            max_requests_per_window=300,
+            max_concurrent=5,
+            max_requests_per_window=30,
             window_seconds=10.0,
         )
         self._gamma_url = settings.POLYMARKET_API_URL
@@ -64,40 +64,47 @@ class PolymarketConnector(BaseConnector):
         logger.info("polymarket_fetch_complete", total=len(all_markets))
         return all_markets
 
-    async def fetch_prices(self, market_ids: list[str]) -> list[dict]:
-        if not market_ids:
-            return []
+    async def fetch_prices(self, token_ids: list[str]) -> dict[str, str]:
+        """Fetch midpoint prices for a batch of token_ids via POST /midpoints.
 
-        results: list[dict] = []
+        Args:
+            token_ids: List of CLOB token_ids (NOT condition_ids).
+
+        Returns:
+            Dict mapping token_id -> midpoint price string (e.g. "0.65").
+        """
+        if not token_ids:
+            return {}
+
+        all_prices: dict[str, str] = {}
         client = await self._get_client()
 
-        batch_size = 50
-        for i in range(0, len(market_ids), batch_size):
-            batch = market_ids[i : i + batch_size]
+        batch_size = 100
+        for i in range(0, len(token_ids), batch_size):
+            batch = token_ids[i : i + batch_size]
+            body = [{"token_id": tid} for tid in batch]
+            try:
+                response = await self._retry(
+                    lambda b=body: client.post(
+                        f"{self._clob_url}/midpoints",
+                        json=b,
+                    )
+                )
+                data = response.json()
+                if isinstance(data, dict):
+                    all_prices.update(data)
+            except Exception as exc:
+                logger.warning(
+                    "polymarket_midpoints_error",
+                    batch_start=i,
+                    batch_size=len(batch),
+                    error=str(exc),
+                )
 
-            tasks = []
-            for condition_id in batch:
-                tasks.append(self._fetch_single_price(client, condition_id))
+            if i + batch_size < len(token_ids):
+                await asyncio.sleep(1.0)
 
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            for cid, res in zip(batch, batch_results):
-                if isinstance(res, Exception):
-                    logger.warning("polymarket_price_error", condition_id=cid, error=str(res))
-                    continue
-                results.append(res)
-
-        return results
-
-    async def _fetch_single_price(self, client: httpx.AsyncClient, condition_id: str) -> dict:
-        response = await self._retry(
-            lambda: client.get(
-                f"{self._clob_url}/prices",
-                params={"token_id": condition_id},
-            )
-        )
-        response.raise_for_status()
-        data = response.json()
-        return {"condition_id": condition_id, "prices": data}
+        return all_prices
 
     async def stream_prices(self, market_ids: list[str], callback) -> None:
         if not market_ids:
@@ -200,6 +207,7 @@ class PolymarketConnector(BaseConnector):
         else:
             outcomes_list = raw.get("outcomes", [])
             prices_list = raw.get("outcomePrices", [])
+            clob_token_ids = raw.get("clobTokenIds", [])
             if isinstance(outcomes_list, str):
                 try:
                     outcomes_list = json.loads(outcomes_list)
@@ -210,9 +218,15 @@ class PolymarketConnector(BaseConnector):
                     prices_list = json.loads(prices_list)
                 except (json.JSONDecodeError, TypeError):
                     prices_list = []
+            if isinstance(clob_token_ids, str):
+                try:
+                    clob_token_ids = json.loads(clob_token_ids)
+                except (json.JSONDecodeError, TypeError):
+                    clob_token_ids = []
 
             for i, outcome_name in enumerate(outcomes_list):
-                outcomes[outcome_name] = outcome_name
+                token_id = clob_token_ids[i] if i < len(clob_token_ids) else outcome_name
+                outcomes[outcome_name] = token_id
                 if i < len(prices_list):
                     try:
                         outcome_prices[outcome_name] = float(prices_list[i])
