@@ -4,6 +4,7 @@ from sqlalchemy import Select, and_, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.categories import resolve_category
 from app.models.market import UnifiedMarket
 from app.models.platform import Platform
 from app.models.price_history import PriceSnapshot
@@ -44,7 +45,11 @@ class MarketService:
         if platform:
             filters.append(Platform.slug == platform)
         if category:
-            filters.append(UnifiedMarket.category == category)
+            db_cat = resolve_category(category)
+            if db_cat:
+                filters.append(UnifiedMarket.category == db_cat)
+            else:
+                filters.append(UnifiedMarket.category == category)
         if status:
             filters.append(UnifiedMarket.status == status)
         if cursor:
@@ -198,6 +203,27 @@ class MarketService:
             )
 
         return trending
+
+    async def get_category_counts(self, platform: str | None = None) -> list[dict]:
+        """Return category counts for active markets."""
+        from app.categories import DISPLAY_NAMES
+
+        query = (
+            select(UnifiedMarket.category, func.count())
+            .where(UnifiedMarket.category.isnot(None))
+        )
+        if platform:
+            query = (
+                query.join(Platform, Platform.id == UnifiedMarket.platform_id)
+                .where(Platform.slug == platform)
+            )
+        query = query.group_by(UnifiedMarket.category)
+
+        result = await self._db.execute(query)
+        return [
+            {"category": row[0], "display_name": DISPLAY_NAMES.get(row[0], row[0].title()), "count": row[1]}
+            for row in result.all()
+        ]
 
     async def upsert_market(self, market_data: dict) -> None:
         market_data["last_synced_at"] = datetime.now(timezone.utc)

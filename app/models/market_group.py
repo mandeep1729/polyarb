@@ -58,6 +58,12 @@ class MarketGroup(Base):
         Index("ix_market_groups_disagreement", "disagreement_score"),
         Index("ix_market_groups_source_event", "source_event_ticker"),
         Index("ix_market_groups_is_active", "is_active"),
+        Index(
+            "ix_market_groups_question_trgm",
+            "canonical_question",
+            postgresql_using="gin",
+            postgresql_ops={"canonical_question": "gin_trgm_ops"},
+        ),
     )
 
 

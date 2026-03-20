@@ -38,6 +38,16 @@ async def list_markets(
     )
 
 
+@router.get("/category-counts")
+async def market_category_counts(
+    platform: str | None = Query(None, description="Filter by platform slug"),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Return category counts for markets."""
+    service = MarketService(db)
+    return await service.get_category_counts(platform=platform)
+
+
 @router.get("/trending", response_model=list[TrendingMarketResponse])
 async def trending_markets(
     limit: int = Query(10, ge=1, le=50),

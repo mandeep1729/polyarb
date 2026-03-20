@@ -28,6 +28,30 @@ async def list_groups(
     )
 
 
+@router.get("/search", response_model=GroupListResponse)
+async def search_groups(
+    q: str = Query(..., min_length=2, max_length=200),
+    category: str | None = None,
+    sort_by: str = Query(default="liquidity", pattern="^(disagreement|volume|liquidity|consensus|created_at)$"),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_session),
+) -> GroupListResponse:
+    """Search groups by canonical question text."""
+    service = GroupService(db)
+    return await service.search_groups(
+        query=q, category=category, sort_by=sort_by, limit=limit
+    )
+
+
+@router.get("/categories")
+async def group_category_counts(
+    db: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """Return category counts for active groups."""
+    service = GroupService(db)
+    return await service.get_category_counts()
+
+
 @router.get("/{group_id}", response_model=GroupDetailResponse)
 async def get_group(
     group_id: int,

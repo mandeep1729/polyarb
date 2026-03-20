@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQueryState } from 'nuqs';
 import SearchInput from '@/components/markets/SearchInput';
@@ -8,6 +8,7 @@ import CategoryFilter from '@/components/markets/CategoryFilter';
 import SortSelect from '@/components/markets/SortSelect';
 import PlatformColumn from '@/components/markets/PlatformColumn';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
+import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
 
 const PLATFORMS = [
   { slug: 'polymarket', label: 'Polymarket' },
@@ -23,6 +24,17 @@ function MarketsContent() {
 
   const resolvedCategory = category === 'All' ? undefined : category ?? undefined;
   const resolvedSort = sort ?? 'volume_24h';
+
+  const { data: categoryCounts } = useMarketCategoryCounts();
+
+  const countsRecord = useMemo(() => {
+    if (!categoryCounts) return undefined;
+    const rec: Record<string, number> = {};
+    for (const c of categoryCounts) {
+      rec[c.display_name] = c.count;
+    }
+    return rec;
+  }, [categoryCounts]);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
@@ -44,7 +56,7 @@ function MarketsContent() {
           <SortSelect />
         </div>
 
-        <CategoryFilter />
+        <CategoryFilter counts={countsRecord} />
       </div>
 
       {/* Split columns - fill remaining height */}

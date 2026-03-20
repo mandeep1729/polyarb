@@ -7,6 +7,7 @@ import structlog
 import websockets
 
 from app.config import settings
+from app.categories import infer_category
 from app.connectors.base import BaseConnector
 
 logger = structlog.get_logger()
@@ -276,6 +277,11 @@ class PolymarketConnector(BaseConnector):
             tags = raw.get("tags", [])
             if tags and isinstance(tags, list):
                 category = tags[0].get("label") if isinstance(tags[0], dict) else str(tags[0])
+        if not category:
+            category = infer_category(
+                question=raw.get("question", ""),
+                description=raw.get("description"),
+            )
 
         return {
             "platform_market_id": condition_id or str(raw.get("id", "")),

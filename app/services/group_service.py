@@ -1,9 +1,10 @@
 """Service for querying market groups and their analytics."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Select, and_, desc, func, select
+from sqlalchemy import Select, and_, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.categories import resolve_category
 from app.models.group_snapshot import GroupPriceSnapshot
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
@@ -46,7 +47,11 @@ class GroupService:
 
         filters = []
         if category:
-            filters.append(MarketGroup.category == category)
+            db_cat = resolve_category(category)
+            if db_cat:
+                filters.append(MarketGroup.category == db_cat)
+            else:
+                filters.append(MarketGroup.category == category)
         if cursor:
             filters.append(MarketGroup.id > int(cursor))
         if filters:
@@ -69,6 +74,85 @@ class GroupService:
         next_cursor = str(groups[-1].id) if len(groups) == limit else None
 
         return PaginatedResponse(items=items, next_cursor=next_cursor, total=total)
+
+    async def search_groups(
+        self,
+        query: str,
+        category: str | None = None,
+        sort_by: str = "liquidity",
+        limit: int = 20,
+    ) -> PaginatedResponse[GroupResponse]:
+        """Full-text search on group canonical_question with ILIKE fallback."""
+        ts_query = func.plainto_tsquery("english", query)
+        ts_vector = func.to_tsvector("english", MarketGroup.canonical_question)
+        rank = func.ts_rank(ts_vector, ts_query)
+
+        stmt = (
+            select(MarketGroup, rank.label("rank"))
+            .where(
+                MarketGroup.is_active.is_(True),
+                MarketGroup.member_count > 1,
+                ts_vector.bool_op("@@")(ts_query),
+            )
+        )
+
+        if category:
+            db_cat = resolve_category(category)
+            if db_cat:
+                stmt = stmt.where(MarketGroup.category == db_cat)
+
+        sort_col = SORT_COLUMNS.get(sort_by, MarketGroup.disagreement_score)
+        stmt = stmt.order_by(desc("rank"), desc(sort_col).nulls_last()).limit(limit)
+
+        result = await self._db.execute(stmt)
+        rows = result.all()
+
+        # ILIKE fallback when FTS returns fewer than limit
+        if len(rows) < limit:
+            like_pattern = f"%{query.lower()}%"
+            existing_ids = {row[0].id for row in rows}
+
+            fallback = select(MarketGroup).where(
+                MarketGroup.is_active.is_(True),
+                MarketGroup.member_count > 1,
+                func.lower(MarketGroup.canonical_question).like(like_pattern),
+            )
+            if existing_ids:
+                fallback = fallback.where(MarketGroup.id.not_in(existing_ids))
+            if category:
+                db_cat = resolve_category(category)
+                if db_cat:
+                    fallback = fallback.where(MarketGroup.category == db_cat)
+
+            fallback = fallback.order_by(
+                desc(sort_col).nulls_last()
+            ).limit(limit - len(rows))
+
+            fb_result = await self._db.execute(fallback)
+            fb_groups = fb_result.scalars().all()
+            all_groups = [row[0] for row in rows] + list(fb_groups)
+        else:
+            all_groups = [row[0] for row in rows]
+
+        items = [GroupResponse.model_validate(g) for g in all_groups]
+        return PaginatedResponse(items=items, next_cursor=None, total=len(items))
+
+    async def get_category_counts(self) -> list[dict]:
+        """Return category counts for active groups with >1 member."""
+        result = await self._db.execute(
+            select(MarketGroup.category, func.count())
+            .where(
+                MarketGroup.is_active.is_(True),
+                MarketGroup.member_count > 1,
+                MarketGroup.category.isnot(None),
+            )
+            .group_by(MarketGroup.category)
+        )
+        from app.categories import DISPLAY_NAMES
+        return [
+            {"category": row[0], "display_name": DISPLAY_NAMES.get(row[0], row[0].title()), "count": row[1]}
+            for row in result.all()
+        ]
 
     async def get_group_detail(self, group_id: int) -> GroupDetailResponse | None:
         """Return group with all member markets and best-odds markets."""

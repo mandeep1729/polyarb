@@ -11,14 +11,25 @@ import LiquidityIndicator from './LiquidityIndicator';
 import ExpiryCountdown from './ExpiryCountdown';
 import { ExternalLink, TrendingUp } from 'lucide-react';
 
+// DB category → display name
+const CATEGORY_DISPLAY: Record<string, string> = {
+  politics: 'Politics',
+  crypto: 'Crypto',
+  sports: 'Sports',
+  economics: 'Finance',
+  entertainment: 'Entertainment',
+  technology: 'Science',
+  climate: 'Weather',
+};
+
 const categoryColors: Record<string, string> = {
-  Politics: 'bg-blue-900/50 text-blue-300',
-  Crypto: 'bg-orange-900/50 text-orange-300',
-  Sports: 'bg-green-900/50 text-green-300',
-  Finance: 'bg-emerald-900/50 text-emerald-300',
-  Entertainment: 'bg-pink-900/50 text-pink-300',
-  Science: 'bg-cyan-900/50 text-cyan-300',
-  Weather: 'bg-sky-900/50 text-sky-300',
+  politics: 'bg-blue-900/50 text-blue-300',
+  crypto: 'bg-orange-900/50 text-orange-300',
+  sports: 'bg-green-900/50 text-green-300',
+  economics: 'bg-emerald-900/50 text-emerald-300',
+  entertainment: 'bg-pink-900/50 text-pink-300',
+  technology: 'bg-cyan-900/50 text-cyan-300',
+  climate: 'bg-sky-900/50 text-sky-300',
 };
 
 interface BetCardProps {
@@ -48,7 +59,7 @@ export default function BetCard({
               categoryColors[market.category] ?? 'bg-gray-800 text-gray-400'
             )}
           >
-            {market.category}
+            {CATEGORY_DISPLAY[market.category] ?? market.category}
           </span>
         )}
         <PlatformBadge platform={market.platform_name} />

@@ -1,6 +1,7 @@
 from sqlalchemy import and_, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.categories import resolve_category
 from app.matching.synonyms import expand_synonyms
 from app.models.market import UnifiedMarket
 from app.models.platform import Platform
@@ -42,7 +43,9 @@ class SearchService:
 
         filters = []
         if category:
-            filters.append(UnifiedMarket.category == category)
+            db_cat = resolve_category(category)
+            cat_val = db_cat if db_cat else category
+            filters.append(UnifiedMarket.category == cat_val)
         if platform:
             filters.append(Platform.slug == platform)
         if filters:
@@ -70,7 +73,9 @@ class SearchService:
 
             fb_filters = []
             if category:
-                fb_filters.append(UnifiedMarket.category == category)
+                db_cat = resolve_category(category)
+                cat_val = db_cat if db_cat else category
+                fb_filters.append(UnifiedMarket.category == cat_val)
             if platform:
                 fb_filters.append(Platform.slug == platform)
             if fb_filters:

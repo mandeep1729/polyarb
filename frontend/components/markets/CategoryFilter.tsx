@@ -26,9 +26,10 @@ const categoryColors: Record<string, string> = {
 
 interface CategoryFilterProps {
   className?: string;
+  counts?: Record<string, number>;
 }
 
-export default function CategoryFilter({ className }: CategoryFilterProps) {
+export default function CategoryFilter({ className, counts }: CategoryFilterProps) {
   const [category, setCategory] = useQueryState('category', {
     defaultValue: 'All',
     shallow: false,
@@ -48,6 +49,8 @@ export default function CategoryFilter({ className }: CategoryFilterProps) {
             ? categoryColors[cat] ?? 'bg-gray-800 text-gray-200 border-gray-700'
             : '';
 
+        const count = cat !== 'All' && counts ? counts[cat] : undefined;
+
         return (
           <button
             key={cat}
@@ -63,6 +66,11 @@ export default function CategoryFilter({ className }: CategoryFilterProps) {
             )}
           >
             {cat}
+            {count != null && count > 0 && (
+              <span className="ml-1.5 text-[10px] opacity-70">
+                ({count.toLocaleString()})
+              </span>
+            )}
           </button>
         );
       })}

@@ -1,13 +1,16 @@
 'use client';
 
-import { Suspense, useState, useCallback, useRef } from 'react';
+import { Suspense, useState, useCallback, useRef, useMemo } from 'react';
 import { useGroups } from '@/lib/queries/useGroups';
+import { useGroupSearch } from '@/lib/queries/useGroupSearch';
+import { useGroupCategoryCounts } from '@/lib/queries/useCategoryCounts';
 import { useMarkets } from '@/lib/queries/useMarkets';
 import { useArbitrage } from '@/lib/queries/useArbitrage';
 import StatsBar from '@/components/dashboard/StatsBar';
 import GroupCard from '@/components/groups/GroupCard';
 import { GroupCardGridSkeleton } from '@/components/groups/GroupCardSkeleton';
 import CategoryFilter from '@/components/markets/CategoryFilter';
+import SearchInput from '@/components/markets/SearchInput';
 import EmptyState from '@/components/shared/EmptyState';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { Layers } from 'lucide-react';
@@ -24,13 +27,16 @@ export default function Home() {
 function HomeContent() {
   const [category] = useQueryState('category');
   const [sortBy, setSortBy] = useState('liquidity');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const { data: marketsData } = useMarkets({ limit: 1 });
   const { data: arbData } = useArbitrage({ limit: 100 });
 
+  const isSearching = searchQuery.length >= 2;
+
   const {
     data: groupsData,
-    isLoading,
+    isLoading: groupsLoading,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -40,6 +46,27 @@ function HomeContent() {
     limit: 24,
   });
 
+  const {
+    data: searchData,
+    isLoading: searchLoading,
+  } = useGroupSearch(searchQuery, {
+    category: category ?? undefined,
+    sort_by: sortBy,
+    limit: 24,
+  });
+
+  const { data: categoryCounts } = useGroupCategoryCounts();
+
+  // Build counts record for CategoryFilter: display_name → count
+  const countsRecord = useMemo(() => {
+    if (!categoryCounts) return undefined;
+    const rec: Record<string, number> = {};
+    for (const c of categoryCounts) {
+      rec[c.display_name] = c.count;
+    }
+    return rec;
+  }, [categoryCounts]);
+
   const totalMarkets = marketsData?.pages[0]?.total ?? 0;
   const arbOpps = arbData?.pages.flatMap((p) => p.items) ?? [];
   const avgSpread =
@@ -47,10 +74,15 @@ function HomeContent() {
       ? arbOpps.reduce((sum, o) => sum + (o.odds_delta ?? 0), 0) / arbOpps.length
       : 0;
 
-  const groups = groupsData?.pages.flatMap((p) => p.items) ?? [];
-  const totalGroups = groupsData?.pages[0]?.total ?? 0;
+  const groups = isSearching
+    ? searchData?.items ?? []
+    : groupsData?.pages.flatMap((p) => p.items) ?? [];
+  const totalGroups = isSearching
+    ? searchData?.total ?? 0
+    : groupsData?.pages[0]?.total ?? 0;
+  const isLoading = isSearching ? searchLoading : groupsLoading;
 
-  // Infinite scroll
+  // Infinite scroll (only for non-search mode)
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -84,23 +116,31 @@ function HomeContent() {
         />
       </ErrorBoundary>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <CategoryFilter />
-        <select
-          value={sortBy}
-          onChange={(e) => setSortBy(e.target.value)}
-          className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-        >
-          <option value="liquidity">Liquidity</option>
-          <option value="disagreement">Highest Spread</option>
-          <option value="volume">Volume</option>
-          <option value="consensus">Consensus</option>
-          <option value="created_at">Newest</option>
-        </select>
-        <span className="text-xs text-gray-500">
-          {totalGroups.toLocaleString()} groups
-        </span>
+      {/* Search + Filters */}
+      <div className="space-y-3">
+        <SearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search groups..."
+          className="max-w-sm"
+        />
+        <div className="flex flex-wrap items-center gap-3">
+          <CategoryFilter counts={countsRecord} />
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+          >
+            <option value="liquidity">Liquidity</option>
+            <option value="disagreement">Highest Spread</option>
+            <option value="volume">Volume</option>
+            <option value="consensus">Consensus</option>
+            <option value="created_at">Newest</option>
+          </select>
+          <span className="text-xs text-gray-500">
+            {totalGroups.toLocaleString()} groups
+          </span>
+        </div>
       </div>
 
       {/* Group Cards */}
@@ -110,8 +150,12 @@ function HomeContent() {
         ) : groups.length === 0 ? (
           <EmptyState
             icon={<Layers className="h-12 w-12" />}
-            title="Markets are being grouped"
-            description="Check back in a few minutes. Groups are created from market data automatically."
+            title={isSearching ? 'No groups found' : 'Markets are being grouped'}
+            description={
+              isSearching
+                ? 'Try a different search term or clear the filters.'
+                : 'Check back in a few minutes. Groups are created from market data automatically.'
+            }
           />
         ) : (
           <>
@@ -121,8 +165,8 @@ function HomeContent() {
               ))}
             </div>
 
-            {/* Infinite scroll trigger */}
-            {hasNextPage && (
+            {/* Infinite scroll trigger (non-search only) */}
+            {!isSearching && hasNextPage && (
               <div ref={loadMoreRef} className="flex justify-center py-4">
                 {isFetchingNextPage && <GroupCardGridSkeleton count={3} />}
               </div>

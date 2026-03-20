@@ -8,6 +8,7 @@ import structlog
 from kalshi_python_sync import Configuration, KalshiClient, EventsApi, MarketApi
 
 from app.config import settings
+from app.categories import infer_category
 from app.utils import first_float
 
 logger = structlog.get_logger()
@@ -352,9 +353,11 @@ class KalshiConnector:
 
         category = raw.get("category")
         if not category:
-            sub_title = raw.get("subtitle", "") or ""
-            event_ticker = raw.get("event_ticker", "") or ""
-            category = self._infer_category(event_ticker, sub_title)
+            category = infer_category(
+                question=raw.get("title", ""),
+                description=raw.get("subtitle"),
+                event_ticker=raw.get("event_ticker"),
+            )
 
         status_map = {
             "open": "active",
@@ -389,25 +392,3 @@ class KalshiConnector:
             "no_ask": no_ask,
         }
 
-    @staticmethod
-    def _infer_category(event_ticker: str, subtitle: str) -> str | None:
-        event_lower = event_ticker.lower()
-        sub_lower = subtitle.lower()
-        combined = f"{event_lower} {sub_lower}"
-
-        category_keywords = {
-            "politics": ["election", "president", "congress", "senate", "governor", "potus", "vote"],
-            "crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "defi"],
-            "economics": ["fed", "inflation", "gdp", "unemployment", "interest rate", "cpi"],
-            "sports": ["nfl", "nba", "mlb", "nhl", "super bowl", "world series", "championship"],
-            "technology": ["ai", "tech", "apple", "google", "microsoft", "spacex"],
-            "entertainment": ["oscar", "emmy", "grammy", "box office", "movie"],
-            "climate": ["temperature", "hurricane", "weather", "climate"],
-        }
-
-        for cat, keywords in category_keywords.items():
-            for kw in keywords:
-                if kw in combined:
-                    return cat
-
-        return None

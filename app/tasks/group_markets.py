@@ -442,6 +442,13 @@ async def _phase3_compute_analytics(db) -> int:
         group.total_volume = round(total_vol, 2)
         group.total_liquidity = round(total_liq, 2)
 
+        # Propagate majority member category to groups with NULL category
+        if not group.category:
+            member_cats = [m.category for m in members if m.category]
+            if member_cats:
+                from collections import Counter
+                group.category = Counter(member_cats).most_common(1)[0][0]
+
         # Create materialized snapshot
         snapshot = GroupPriceSnapshot(
             group_id=group.id,
