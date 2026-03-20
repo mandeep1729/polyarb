@@ -5,6 +5,7 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category
+from app.services.search_utils import build_or_tsquery
 from app.models.group_snapshot import GroupPriceSnapshot
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
@@ -85,7 +86,8 @@ class GroupService:
         """Full-text search on group canonical_question with ILIKE fallback."""
         db_cat = resolve_category(category) if category else None
 
-        ts_query = func.plainto_tsquery("english", query)
+        or_query = build_or_tsquery(query)
+        ts_query = func.to_tsquery("english", or_query)
         ts_vector = func.to_tsvector("english", MarketGroup.canonical_question)
         rank = func.ts_rank(ts_vector, ts_query)
 
@@ -93,7 +95,6 @@ class GroupService:
             select(MarketGroup, rank.label("rank"))
             .where(
                 MarketGroup.is_active.is_(True),
-                MarketGroup.member_count > 1,
                 ts_vector.bool_op("@@")(ts_query),
             )
         )
@@ -114,7 +115,6 @@ class GroupService:
 
             fallback = select(MarketGroup).where(
                 MarketGroup.is_active.is_(True),
-                MarketGroup.member_count > 1,
                 func.lower(MarketGroup.canonical_question).like(like_pattern),
             )
             if existing_ids:

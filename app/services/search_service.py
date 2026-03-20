@@ -2,20 +2,11 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category
-from app.matching.synonyms import expand_synonyms
 from app.models.market import UnifiedMarket
 from app.models.platform import Platform
 from app.schemas.market import MarketResponse
 from app.services.market_service import MarketService
-
-
-def _build_or_tsquery(query: str) -> str:
-    """Build a tsquery string that ORs the original terms with synonyms."""
-    expanded = expand_synonyms(query.lower())
-    terms = expanded.split()
-    if not terms:
-        return query
-    return " | ".join(terms)
+from app.services.search_utils import build_or_tsquery
 
 
 class SearchService:
@@ -29,7 +20,7 @@ class SearchService:
         platform: str | None = None,
         limit: int = 20,
     ) -> list[MarketResponse]:
-        or_query = _build_or_tsquery(query)
+        or_query = build_or_tsquery(query)
 
         ts_query = func.to_tsquery("english", or_query)
         ts_vector = func.to_tsvector("english", UnifiedMarket.question)
