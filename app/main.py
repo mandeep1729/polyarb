@@ -73,3 +73,12 @@ app.include_router(groups_router, prefix="/api/v1")
 @app.get("/", include_in_schema=False)
 async def root() -> RedirectResponse:
     return RedirectResponse(url="/docs")
+
+
+@app.post("/api/v1/admin/backfill", include_in_schema=False)
+async def trigger_backfill() -> dict:
+    """One-off trigger for historical price backfill (runs in uvicorn loop)."""
+    import asyncio
+    from app.tasks.backfill_prices import run_backfill_inline
+    asyncio.create_task(run_backfill_inline())
+    return {"status": "backfill started"}

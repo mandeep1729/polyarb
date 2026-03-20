@@ -55,44 +55,56 @@ def _round_to_hour(ts: int) -> datetime:
     return dt.replace(minute=0, second=0, microsecond=0)
 
 
-async def backfill_all_prices() -> None:
-    """Backfill historical prices for top markets from platform APIs.
-
-    Idempotent: uses ON CONFLICT DO NOTHING on (market_id, timestamp).
-    Safe to re-run — skips already-inserted timestamps.
-    """
-    logger.info("backfill_all_prices_started")
-
+async def _run_backfill(session_factory) -> tuple[int, int]:
+    """Core backfill logic using the provided session factory."""
     poly_total = 0
     kalshi_total = 0
 
-    # Use separate sessions per platform to avoid long-lived transactions
     try:
-        async with get_background_session_factory()() as db:
+        async with session_factory() as db:
             result = await db.execute(
                 select(Platform).where(Platform.is_active.is_(True))
             )
             platforms = {p.slug: p.id for p in result.scalars().all()}
     except Exception as exc:
         logger.error("backfill_load_platforms_failed", error=str(exc))
-        return
+        return 0, 0
 
     if "polymarket" in platforms:
         try:
-            async with get_background_session_factory()() as db:
+            async with session_factory() as db:
                 poly_total = await _backfill_polymarket(db, platforms["polymarket"])
         except Exception as exc:
             logger.error("backfill_polymarket_failed", error=str(exc))
 
     if "kalshi" in platforms:
         try:
-            async with get_background_session_factory()() as db:
+            async with session_factory() as db:
                 kalshi_total = await _backfill_kalshi(db, platforms["kalshi"])
         except Exception as exc:
             logger.error("backfill_kalshi_failed", error=str(exc))
 
+    return poly_total, kalshi_total
+
+
+async def backfill_all_prices() -> None:
+    """Backfill historical prices (called from scheduler thread)."""
+    logger.info("backfill_all_prices_started")
+    poly_total, kalshi_total = await _run_backfill(get_background_session_factory())
     logger.info(
         "backfill_all_prices_complete",
+        polymarket_inserted=poly_total,
+        kalshi_inserted=kalshi_total,
+    )
+
+
+async def run_backfill_inline() -> None:
+    """Backfill historical prices (called from uvicorn event loop via admin endpoint)."""
+    from app.database import async_session_factory
+    logger.info("backfill_inline_started")
+    poly_total, kalshi_total = await _run_backfill(async_session_factory)
+    logger.info(
+        "backfill_inline_complete",
         polymarket_inserted=poly_total,
         kalshi_inserted=kalshi_total,
     )
@@ -127,7 +139,7 @@ async def _backfill_polymarket(db, platform_id: int) -> int:
                 # Fetch price history for each token (Yes/No)
                 token_histories: dict[str, list[dict]] = {}
                 for outcome_name, token_id in outcomes.items():
-                    if not token_id:
+                    if not token_id or len(token_id) < 10:
                         continue
                     history = await connector.fetch_price_history(
                         token_id, start_ts, now_ts
