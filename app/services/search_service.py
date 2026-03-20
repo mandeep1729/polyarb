@@ -1,4 +1,4 @@
-from sqlalchemy import and_, desc, func, select, text
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category

@@ -5,6 +5,8 @@ lowercase domain names (e.g. "economics"). This module bridges that gap
 and provides keyword-based category inference for markets without one.
 """
 
+import re
+
 # Frontend display name (lowered) → DB category value
 CATEGORY_MAP: dict[str, str] = {
     "politics": "politics",
@@ -75,6 +77,16 @@ def resolve_category(frontend_value: str | None) -> str | None:
     return CATEGORY_MAP.get(frontend_value.lower())
 
 
+# Pre-compile regex patterns for each category (word-boundary matching)
+_CATEGORY_PATTERNS: dict[str, re.Pattern] = {
+    cat: re.compile(
+        r"\b(?:" + "|".join(re.escape(kw) for kw in keywords) + r")\b",
+        re.IGNORECASE,
+    )
+    for cat, keywords in CATEGORY_KEYWORDS.items()
+}
+
+
 def infer_category(
     question: str,
     description: str | None = None,
@@ -82,19 +94,19 @@ def infer_category(
 ) -> str | None:
     """Infer a category from free-text fields using keyword matching.
 
+    Uses word-boundary regex to avoid false positives (e.g. "inflation" matching "nfl").
     Checks question, description, and event_ticker against the keyword lists.
     Returns the first matching DB category, or None.
     """
     parts = [
-        (question or "").lower(),
-        (description or "").lower(),
-        (event_ticker or "").lower(),
+        question or "",
+        description or "",
+        event_ticker or "",
     ]
     combined = " ".join(parts)
 
-    for cat, keywords in CATEGORY_KEYWORDS.items():
-        for kw in keywords:
-            if kw in combined:
-                return cat
+    for cat, pattern in _CATEGORY_PATTERNS.items():
+        if pattern.search(combined):
+            return cat
 
     return None

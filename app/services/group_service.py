@@ -1,7 +1,7 @@
 """Service for querying market groups and their analytics."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Select, and_, desc, func, select, text
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category
@@ -83,6 +83,8 @@ class GroupService:
         limit: int = 20,
     ) -> PaginatedResponse[GroupResponse]:
         """Full-text search on group canonical_question with ILIKE fallback."""
+        db_cat = resolve_category(category) if category else None
+
         ts_query = func.plainto_tsquery("english", query)
         ts_vector = func.to_tsvector("english", MarketGroup.canonical_question)
         rank = func.ts_rank(ts_vector, ts_query)
@@ -96,10 +98,8 @@ class GroupService:
             )
         )
 
-        if category:
-            db_cat = resolve_category(category)
-            if db_cat:
-                stmt = stmt.where(MarketGroup.category == db_cat)
+        if db_cat:
+            stmt = stmt.where(MarketGroup.category == db_cat)
 
         sort_col = SORT_COLUMNS.get(sort_by, MarketGroup.disagreement_score)
         stmt = stmt.order_by(desc("rank"), desc(sort_col).nulls_last()).limit(limit)
@@ -119,10 +119,8 @@ class GroupService:
             )
             if existing_ids:
                 fallback = fallback.where(MarketGroup.id.not_in(existing_ids))
-            if category:
-                db_cat = resolve_category(category)
-                if db_cat:
-                    fallback = fallback.where(MarketGroup.category == db_cat)
+            if db_cat:
+                fallback = fallback.where(MarketGroup.category == db_cat)
 
             fallback = fallback.order_by(
                 desc(sort_col).nulls_last()
