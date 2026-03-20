@@ -11,7 +11,7 @@ class PriceSnapshot(Base):
     __tablename__ = "price_snapshots"
 
     id: Mapped[int] = mapped_column(init=False, primary_key=True, autoincrement=True)
-    market_id: Mapped[int] = mapped_column(ForeignKey("unified_markets.id", ondelete="CASCADE"))
+    market_id: Mapped[int] = mapped_column(ForeignKey("unified_markets.id", ondelete="RESTRICT"))
     outcome_prices: Mapped[dict] = mapped_column(JSONB, default_factory=dict)
     volume: Mapped[float | None] = mapped_column(Float, default=None)
     timestamp: Mapped[datetime | None] = mapped_column(
