@@ -46,7 +46,7 @@ export default function GroupCard({ group }: GroupCardProps) {
       className={cn(
         'rounded-xl border border-gray-800 bg-gray-900 transition-all duration-200',
         expanded
-          ? 'border-gray-700'
+          ? 'col-span-full border-gray-700'
           : 'hover:border-gray-700 hover:scale-[1.005]'
       )}
     >

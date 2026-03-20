@@ -172,7 +172,7 @@ export default function GroupExpandedView({ groupId }: GroupExpandedViewProps) {
             className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-gray-800"
           >
             <PlatformBadge platform={m.platform_name} />
-            <span className="min-w-0 flex-1 truncate text-gray-300">
+            <span className="min-w-0 flex-1 text-gray-300">
               {m.question}
             </span>
             <span className="flex items-center gap-1 tabular-nums text-gray-400">
