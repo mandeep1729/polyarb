@@ -37,11 +37,30 @@ class GroupService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    @staticmethod
+    def _end_date_subquery(
+        end_date_min: str | None, end_date_max: str | None,
+    ) -> select | None:
+        """Build a subquery filtering groups by member end_date range."""
+        if end_date_min is None and end_date_max is None:
+            return None
+        conditions = []
+        if end_date_min is not None:
+            conditions.append(UnifiedMarket.end_date >= end_date_min)
+        if end_date_max is not None:
+            conditions.append(UnifiedMarket.end_date <= end_date_max)
+        return (
+            select(MarketGroupMember.group_id)
+            .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+            .where(*conditions)
+        )
+
     async def get_groups(
         self,
         category: str | None = None,
         sort_by: str = "liquidity",
-        expires_within: int | None = None,
+        end_date_min: str | None = None,
+        end_date_max: str | None = None,
         limit: int = 20,
         cursor: str | None = None,
     ) -> PaginatedResponse[GroupResponse]:
@@ -58,18 +77,8 @@ class GroupService:
                 filters.append(MarketGroup.category == db_cat)
             else:
                 filters.append(MarketGroup.category == category)
-        if expires_within is not None:
-            now = datetime.now(timezone.utc)
-            deadline = now + timedelta(days=expires_within)
-            member_subq = (
-                select(MarketGroupMember.group_id)
-                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
-                .where(
-                    UnifiedMarket.end_date >= now,
-                    UnifiedMarket.end_date <= deadline,
-                )
-                .correlate(MarketGroup)
-            )
+        member_subq = self._end_date_subquery(end_date_min, end_date_max)
+        if member_subq is not None:
             filters.append(MarketGroup.id.in_(member_subq))
         if cursor:
             filters.append(MarketGroup.id > int(cursor))
@@ -99,7 +108,8 @@ class GroupService:
         query: str,
         category: str | None = None,
         sort_by: str = "liquidity",
-        expires_within: int | None = None,
+        end_date_min: str | None = None,
+        end_date_max: str | None = None,
         limit: int = 20,
     ) -> PaginatedResponse[GroupResponse]:
         """Full-text search on group canonical_question with ILIKE fallback."""
@@ -120,17 +130,8 @@ class GroupService:
 
         if db_cat:
             stmt = stmt.where(MarketGroup.category == db_cat)
-        if expires_within is not None:
-            now = datetime.now(timezone.utc)
-            deadline = now + timedelta(days=expires_within)
-            member_subq = (
-                select(MarketGroupMember.group_id)
-                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
-                .where(
-                    UnifiedMarket.end_date >= now,
-                    UnifiedMarket.end_date <= deadline,
-                )
-            )
+        member_subq = self._end_date_subquery(end_date_min, end_date_max)
+        if member_subq is not None:
             stmt = stmt.where(MarketGroup.id.in_(member_subq))
 
         sort_col = SORT_COLUMNS.get(sort_by, MarketGroup.disagreement_score)
@@ -152,7 +153,7 @@ class GroupService:
                 fallback = fallback.where(MarketGroup.id.not_in(existing_ids))
             if db_cat:
                 fallback = fallback.where(MarketGroup.category == db_cat)
-            if expires_within is not None:
+            if member_subq is not None:
                 fallback = fallback.where(MarketGroup.id.in_(member_subq))
 
             fallback = fallback.order_by(

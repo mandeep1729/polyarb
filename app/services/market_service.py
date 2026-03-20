@@ -33,7 +33,8 @@ class MarketService:
         category: str | None = None,
         status: str | None = None,
         sort_by: str = "volume_24h",
-        expires_within: int | None = None,
+        end_date_min: datetime | None = None,
+        end_date_max: datetime | None = None,
         limit: int = 20,
         cursor: str | None = None,
     ) -> PaginatedResponse[MarketResponse]:
@@ -53,10 +54,10 @@ class MarketService:
                 filters.append(UnifiedMarket.category == category)
         if status:
             filters.append(UnifiedMarket.status == status)
-        if expires_within is not None:
-            now = datetime.now(timezone.utc)
-            filters.append(UnifiedMarket.end_date >= now)
-            filters.append(UnifiedMarket.end_date <= now + timedelta(days=expires_within))
+        if end_date_min is not None:
+            filters.append(UnifiedMarket.end_date >= end_date_min)
+        if end_date_max is not None:
+            filters.append(UnifiedMarket.end_date <= end_date_max)
         if cursor:
             cursor_id = int(cursor)
             filters.append(UnifiedMarket.id > cursor_id)

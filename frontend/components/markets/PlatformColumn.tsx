@@ -36,7 +36,8 @@ interface PlatformColumnProps {
   searchQuery: string;
   category?: string;
   sort: string;
-  expiresWithin?: number;
+  endDateMin?: string;
+  endDateMax?: string;
 }
 
 export default function PlatformColumn({
@@ -45,7 +46,8 @@ export default function PlatformColumn({
   searchQuery,
   category,
   sort,
-  expiresWithin,
+  endDateMin,
+  endDateMax,
 }: PlatformColumnProps) {
   const style = platformStyles[slug] ?? defaultStyle;
 
@@ -53,7 +55,8 @@ export default function PlatformColumn({
     platform: slug,
     category,
     sort,
-    expires_within: expiresWithin,
+    end_date_min: endDateMin,
+    end_date_max: endDateMax,
     limit: 24,
   };
 

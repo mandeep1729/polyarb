@@ -55,7 +55,8 @@ export interface MarketFilters {
   platform?: string;
   status?: string;
   sort?: string;
-  expires_within?: number;
+  end_date_min?: string;
+  end_date_max?: string;
   cursor?: string;
   limit?: number;
 }
@@ -133,7 +134,8 @@ export async function getCategories(): Promise<string[]> {
 export interface GroupFilters {
   category?: string;
   sort_by?: string;
-  expires_within?: number;
+  end_date_min?: string;
+  end_date_max?: string;
   cursor?: string;
   limit?: number;
 }
@@ -162,7 +164,8 @@ export async function getGroupHistory(
 export interface GroupSearchFilters {
   category?: string;
   sort_by?: string;
-  expires_within?: number;
+  end_date_min?: string;
+  end_date_max?: string;
   limit?: number;
 }
 
