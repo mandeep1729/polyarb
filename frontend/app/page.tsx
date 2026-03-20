@@ -12,6 +12,7 @@ import GroupCard from '@/components/groups/GroupCard';
 import TagCloud from '@/components/groups/TagCloud';
 import { GroupCardGridSkeleton } from '@/components/groups/GroupCardSkeleton';
 import CategoryFilter from '@/components/markets/CategoryFilter';
+import ExpiryFilter from '@/components/markets/ExpiryFilter';
 import SearchInput from '@/components/markets/SearchInput';
 import EmptyState from '@/components/shared/EmptyState';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
@@ -30,6 +31,7 @@ function HomeContent() {
   const [category] = useQueryState('category');
   const [sortBy, setSortBy] = useState('liquidity');
   const [searchQuery, setSearchQuery] = useState('');
+  const [expiresWithin, setExpiresWithin] = useState('');
 
   const { data: marketsData } = useMarkets({ limit: 1 });
   const { data: arbData } = useArbitrage({ limit: 100 });
@@ -45,6 +47,7 @@ function HomeContent() {
   } = useGroups({
     category: category ?? undefined,
     sort_by: sortBy,
+    expires_within: expiresWithin ? Number(expiresWithin) : undefined,
     limit: 24,
   });
 
@@ -54,6 +57,7 @@ function HomeContent() {
   } = useGroupSearch(searchQuery, {
     category: category ?? undefined,
     sort_by: sortBy,
+    expires_within: expiresWithin ? Number(expiresWithin) : undefined,
     limit: 24,
   });
 
@@ -151,6 +155,7 @@ function HomeContent() {
             <option value="consensus">Consensus</option>
             <option value="created_at">Newest</option>
           </select>
+          <ExpiryFilter value={expiresWithin} onChange={setExpiresWithin} />
           <span className="text-xs text-gray-500">
             {totalGroups.toLocaleString()} groups
           </span>

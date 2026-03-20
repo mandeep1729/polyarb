@@ -39,6 +39,7 @@ class GroupService:
         self,
         category: str | None = None,
         sort_by: str = "liquidity",
+        expires_within: int | None = None,
         limit: int = 20,
         cursor: str | None = None,
     ) -> PaginatedResponse[GroupResponse]:
@@ -55,6 +56,19 @@ class GroupService:
                 filters.append(MarketGroup.category == db_cat)
             else:
                 filters.append(MarketGroup.category == category)
+        if expires_within is not None:
+            now = datetime.now(timezone.utc)
+            deadline = now + timedelta(days=expires_within)
+            member_subq = (
+                select(MarketGroupMember.group_id)
+                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+                .where(
+                    UnifiedMarket.end_date >= now,
+                    UnifiedMarket.end_date <= deadline,
+                )
+                .correlate(MarketGroup)
+            )
+            filters.append(MarketGroup.id.in_(member_subq))
         if cursor:
             filters.append(MarketGroup.id > int(cursor))
         if filters:
@@ -83,6 +97,7 @@ class GroupService:
         query: str,
         category: str | None = None,
         sort_by: str = "liquidity",
+        expires_within: int | None = None,
         limit: int = 20,
     ) -> PaginatedResponse[GroupResponse]:
         """Full-text search on group canonical_question with ILIKE fallback."""
@@ -103,6 +118,18 @@ class GroupService:
 
         if db_cat:
             stmt = stmt.where(MarketGroup.category == db_cat)
+        if expires_within is not None:
+            now = datetime.now(timezone.utc)
+            deadline = now + timedelta(days=expires_within)
+            member_subq = (
+                select(MarketGroupMember.group_id)
+                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+                .where(
+                    UnifiedMarket.end_date >= now,
+                    UnifiedMarket.end_date <= deadline,
+                )
+            )
+            stmt = stmt.where(MarketGroup.id.in_(member_subq))
 
         sort_col = SORT_COLUMNS.get(sort_by, MarketGroup.disagreement_score)
         stmt = stmt.order_by(desc("rank"), desc(sort_col).nulls_last()).limit(limit)
@@ -123,6 +150,8 @@ class GroupService:
                 fallback = fallback.where(MarketGroup.id.not_in(existing_ids))
             if db_cat:
                 fallback = fallback.where(MarketGroup.category == db_cat)
+            if expires_within is not None:
+                fallback = fallback.where(MarketGroup.id.in_(member_subq))
 
             fallback = fallback.order_by(
                 desc(sort_col).nulls_last()

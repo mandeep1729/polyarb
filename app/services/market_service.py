@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Select, and_, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -33,6 +33,7 @@ class MarketService:
         category: str | None = None,
         status: str | None = None,
         sort_by: str = "volume_24h",
+        expires_within: int | None = None,
         limit: int = 20,
         cursor: str | None = None,
     ) -> PaginatedResponse[MarketResponse]:
@@ -52,6 +53,10 @@ class MarketService:
                 filters.append(UnifiedMarket.category == category)
         if status:
             filters.append(UnifiedMarket.status == status)
+        if expires_within is not None:
+            now = datetime.now(timezone.utc)
+            filters.append(UnifiedMarket.end_date >= now)
+            filters.append(UnifiedMarket.end_date <= now + timedelta(days=expires_within))
         if cursor:
             cursor_id = int(cursor)
             filters.append(UnifiedMarket.id > cursor_id)

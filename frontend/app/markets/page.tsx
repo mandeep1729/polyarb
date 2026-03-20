@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQueryState } from 'nuqs';
 import SearchInput from '@/components/markets/SearchInput';
 import CategoryFilter from '@/components/markets/CategoryFilter';
+import ExpiryFilter from '@/components/markets/ExpiryFilter';
 import SortSelect from '@/components/markets/SortSelect';
 import PlatformColumn from '@/components/markets/PlatformColumn';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
@@ -21,6 +22,7 @@ function MarketsContent() {
   const [searchQuery, setSearchQuery] = useState(initialQ);
   const [category] = useQueryState('category', { defaultValue: 'All' });
   const [sort] = useQueryState('sort', { defaultValue: 'volume_24h' });
+  const [expiresWithin, setExpiresWithin] = useState('');
 
   const resolvedCategory = category === 'All' ? undefined : category ?? undefined;
   const resolvedSort = sort ?? 'volume_24h';
@@ -53,7 +55,10 @@ function MarketsContent() {
             onChange={setSearchQuery}
             className="sm:max-w-sm"
           />
-          <SortSelect />
+          <div className="flex items-center gap-3">
+            <ExpiryFilter value={expiresWithin} onChange={setExpiresWithin} />
+            <SortSelect />
+          </div>
         </div>
 
         <CategoryFilter counts={countsRecord} />
@@ -70,6 +75,7 @@ function MarketsContent() {
               searchQuery={searchQuery}
               category={resolvedCategory}
               sort={resolvedSort}
+              expiresWithin={expiresWithin ? Number(expiresWithin) : undefined}
             />
           ))}
         </div>

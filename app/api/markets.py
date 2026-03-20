@@ -23,6 +23,7 @@ async def list_markets(
     category: str | None = Query(None, description="Filter by category"),
     status: MarketStatus | None = Query(None, description="Filter by market status"),
     sort_by: SortField = Query(SortField.volume_24h, description="Sort field"),
+    expires_within: int | None = Query(None, ge=1, le=365, description="Only markets expiring within N days"),
     limit: int = Query(20, ge=1, le=100, description="Page size"),
     cursor: str | None = Query(None, description="Pagination cursor"),
     db: AsyncSession = Depends(get_db),
@@ -33,6 +34,7 @@ async def list_markets(
         category=category,
         status=status.value if status else None,
         sort_by=sort_by.value,
+        expires_within=expires_within,
         limit=limit,
         cursor=cursor,
     )
