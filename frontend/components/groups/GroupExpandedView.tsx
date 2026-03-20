@@ -1,12 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { useGroupDetail, useGroupHistory } from '@/lib/queries/useGroups';
 import PlatformBadge from '@/components/markets/PlatformBadge';
-import OddsDisplay from '@/components/markets/OddsDisplay';
 import Skeleton from '@/components/shared/LoadingSkeleton';
+import MarketInlineDetail from '@/components/groups/MarketInlineDetail';
 import { formatVolume } from '@/lib/utils/format';
-import { ExternalLink, Star } from 'lucide-react';
-import Link from 'next/link';
+import { ExternalLink, Star, ChevronRight, ChevronDown } from 'lucide-react';
 import {
   AreaChart,
   Area,
@@ -23,6 +23,7 @@ interface GroupExpandedViewProps {
 export default function GroupExpandedView({ groupId }: GroupExpandedViewProps) {
   const { data: detail, isLoading } = useGroupDetail(groupId);
   const { data: history } = useGroupHistory(groupId, 30);
+  const [expandedMarketId, setExpandedMarketId] = useState<number | null>(null);
 
   if (isLoading) {
     return (
@@ -49,8 +50,6 @@ export default function GroupExpandedView({ groupId }: GroupExpandedViewProps) {
     }),
     consensus: s.consensus_yes != null ? +(s.consensus_yes * 100).toFixed(1) : null,
   }));
-
-  const topMembers = members.slice(0, 5);
 
   return (
     <div className="space-y-4 pt-4">
@@ -163,36 +162,45 @@ export default function GroupExpandedView({ groupId }: GroupExpandedViewProps) {
         </div>
       )}
 
-      {/* Top Members */}
+      {/* Members */}
       <div className="space-y-1">
-        {topMembers.map((m) => (
-          <Link
-            key={m.id}
-            href={`/markets/${m.id}`}
-            className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-gray-800"
-          >
-            <PlatformBadge platform={m.platform_name} />
-            <span className="min-w-0 flex-1 text-gray-300">
-              {m.question}
-            </span>
-            <span className="flex items-center gap-1 tabular-nums text-gray-400">
-              {m.id === group.best_yes_market_id && (
-                <Star className="h-3 w-3 text-emerald-400" />
+        {members.map((m) => (
+          <div key={m.id}>
+            <button
+              type="button"
+              onClick={() =>
+                setExpandedMarketId(expandedMarketId === m.id ? null : m.id)
+              }
+              className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors hover:bg-gray-800"
+            >
+              {expandedMarketId === m.id ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-gray-500" />
               )}
-              {m.outcome_prices?.Yes != null
-                ? `${(m.outcome_prices.Yes * 100).toFixed(0)}¢`
-                : '—'}
-            </span>
-            <span className="tabular-nums text-gray-500">
-              {m.volume_24h != null ? formatVolume(m.volume_24h) : '—'}
-            </span>
-          </Link>
+              <PlatformBadge platform={m.platform_name} />
+              <span className="min-w-0 flex-1 text-gray-300">
+                {m.question}
+              </span>
+              <span className="flex items-center gap-1 tabular-nums text-gray-400">
+                {m.id === group.best_yes_market_id && (
+                  <Star className="h-3 w-3 text-emerald-400" />
+                )}
+                {m.outcome_prices?.Yes != null
+                  ? `${(m.outcome_prices.Yes * 100).toFixed(0)}¢`
+                  : '—'}
+              </span>
+              <span className="tabular-nums text-gray-500">
+                {m.volume_24h != null ? formatVolume(m.volume_24h) : '—'}
+              </span>
+            </button>
+            {expandedMarketId === m.id && (
+              <div className="ml-6 mt-1 mb-2">
+                <MarketInlineDetail market={m} />
+              </div>
+            )}
+          </div>
         ))}
-        {members.length > 5 && (
-          <p className="px-2 pt-1 text-xs text-gray-500">
-            +{members.length - 5} more markets
-          </p>
-        )}
       </div>
     </div>
   );
