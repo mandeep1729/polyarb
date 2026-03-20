@@ -21,6 +21,7 @@ class GroupResponse(BaseModel):
     total_liquidity: float | None = None
     best_yes_market_id: int | None = None
     best_no_market_id: int | None = None
+    match_confidence: float | None = None
     created_at: datetime
     updated_at: datetime
 

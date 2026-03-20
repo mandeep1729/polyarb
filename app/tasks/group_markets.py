@@ -1,26 +1,24 @@
 """Background task for grouping markets and computing group analytics.
 
 Phase 1: Seed groups from platform-native clusters (event_ticker).
-Phase 2: Merge cross-platform groups via TF-IDF similarity.
+Phase 2: Merge cross-platform groups via TF-IDF similarity + end_date gate.
 Phase 3: Compute group analytics (consensus, disagreement, best-odds).
 
 Two entry points:
 - run_mini_grouping(): processes only ungrouped markets (every 10 min)
 - run_full_grouping(): exhaustive cross-platform merge (every 2 hours)
 """
-from datetime import datetime, timezone
-
 import structlog
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
 from app.database import get_background_session_factory
+from app.matching.scorer import _end_date_gate, score_pair
 from app.matching.text import build_tfidf_matrix, get_candidates, preprocess
 from app.models.group_snapshot import GroupPriceSnapshot
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
-from app.models.platform import Platform
 
 logger = structlog.get_logger()
 
@@ -34,6 +32,55 @@ async def _get_ungrouped_market_ids(db) -> set[int]:
         .where(MarketGroupMember.id.is_(None))
     )
     return {row[0] for row in result.all()}
+
+
+async def _load_group_representatives(db, group_ids: list[int]) -> dict[int, dict]:
+    """Load representative end_date and description for each group.
+
+    rep_end_date: MIN(end_date) of all members (conservative).
+    rep_description: description from the highest-liquidity member.
+    """
+    if not group_ids:
+        return {}
+
+    # Batch to avoid param limit
+    reps: dict[int, dict] = {}
+    batch_size = 5000
+    for i in range(0, len(group_ids), batch_size):
+        batch_ids = group_ids[i:i + batch_size]
+
+        # Get min end_date per group
+        end_date_result = await db.execute(
+            select(
+                MarketGroupMember.group_id,
+                func.min(UnifiedMarket.end_date),
+            )
+            .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+            .where(MarketGroupMember.group_id.in_(batch_ids))
+            .group_by(MarketGroupMember.group_id)
+        )
+        for gid, end_date in end_date_result.all():
+            reps.setdefault(gid, {})["end_date"] = end_date
+
+        # Get description from highest-liquidity member per group
+        # Use DISTINCT ON (group_id) ordered by liquidity DESC
+        desc_result = await db.execute(
+            select(
+                MarketGroupMember.group_id,
+                UnifiedMarket.description,
+            )
+            .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+            .where(MarketGroupMember.group_id.in_(batch_ids))
+            .order_by(
+                MarketGroupMember.group_id,
+                UnifiedMarket.liquidity.desc().nulls_last(),
+            )
+            .distinct(MarketGroupMember.group_id)
+        )
+        for gid, description in desc_result.all():
+            reps.setdefault(gid, {})["description"] = description
+
+    return reps
 
 
 async def _phase1_seed_groups(db, market_ids: set[int] | None = None) -> int:
@@ -135,7 +182,7 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
 
     # Load all active groups
     all_groups_result = await db.execute(
-        select(MarketGroup.id, MarketGroup.canonical_question)
+        select(MarketGroup.id, MarketGroup.canonical_question, MarketGroup.category)
         .where(MarketGroup.is_active.is_(True))
     )
     all_groups = all_groups_result.all()
@@ -146,15 +193,18 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
     if not new_groups or not existing_groups:
         return 0
 
+    # Load representative end_date and description for all groups
+    all_group_ids = [g.id for g in new_groups] + [g.id for g in existing_groups]
+    reps = await _load_group_representatives(db, all_group_ids)
+
     # Bulk load group→platform mapping
-    group_ids_all = [g.id for g in new_groups] + [g.id for g in existing_groups]
     platform_result = await db.execute(
         select(
             MarketGroupMember.group_id,
             UnifiedMarket.platform_id,
         )
         .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
-        .where(MarketGroupMember.group_id.in_(group_ids_all))
+        .where(MarketGroupMember.group_id.in_(all_group_ids))
         .distinct(MarketGroupMember.group_id)
     )
     group_platform: dict[int, int] = {row[0]: row[1] for row in platform_result.all()}
@@ -167,6 +217,18 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
     preprocessed = [preprocess(q) for q in all_questions]
     tfidf_matrix, _ = build_tfidf_matrix(preprocessed)
 
+    # Build description TF-IDF matrix
+    all_descs = []
+    for g in list(new_groups) + list(existing_groups):
+        rep = reps.get(g.id, {})
+        desc = rep.get("description") or ""
+        all_descs.append(preprocess(desc) if desc else "")
+
+    has_descs = any(d for d in all_descs)
+    desc_tfidf_matrix = None
+    if has_descs:
+        desc_tfidf_matrix, _ = build_tfidf_matrix(all_descs)
+
     len_new = len(new_groups)
     merges = 0
     merged_ids: set[int] = set()
@@ -176,10 +238,15 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
             continue
 
         new_pid = group_platform.get(g_new.id)
-        candidates = get_candidates(tfidf_matrix[i], tfidf_matrix, threshold=threshold)
+        new_rep = reps.get(g_new.id, {})
+        new_end = new_rep.get("end_date")
+        new_desc = new_rep.get("description")
 
-        best_match: tuple[int, float] | None = None
-        for j, score in candidates:
+        # Use low threshold for TF-IDF candidates, final score_pair does real filtering
+        candidates = get_candidates(tfidf_matrix[i], tfidf_matrix, threshold=0.30)
+
+        best_match: tuple[int, float, float] | None = None  # (idx, composite, tfidf)
+        for j, tfidf_score in candidates:
             if j < len_new:
                 continue  # Skip other new groups
             g_existing = existing_groups[j - len_new]
@@ -188,13 +255,46 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
             existing_pid = group_platform.get(g_existing.id)
             if new_pid is not None and existing_pid is not None and new_pid == existing_pid:
                 continue  # Same platform, skip
-            if best_match is None or score > best_match[1]:
-                best_match = (j - len_new, score)
+
+            ex_rep = reps.get(g_existing.id, {})
+            ex_end = ex_rep.get("end_date")
+
+            # Apply hard gate before expensive scoring
+            if not _end_date_gate(new_end, ex_end):
+                continue
+
+            ex_desc = ex_rep.get("description")
+
+            # Compute description TF-IDF score if available
+            desc_tfidf_score = None
+            if desc_tfidf_matrix is not None:
+                from sklearn.metrics.pairwise import cosine_similarity
+                desc_sim = cosine_similarity(
+                    desc_tfidf_matrix[i], desc_tfidf_matrix[j]
+                ).flatten()[0]
+                desc_tfidf_score = float(desc_sim)
+
+            composite = score_pair(
+                q1=g_new.canonical_question,
+                q2=g_existing.canonical_question,
+                cat1=g_new.category,
+                cat2=g_existing.category,
+                end1=new_end,
+                end2=ex_end,
+                desc1=new_desc,
+                desc2=ex_desc,
+                tfidf_score=tfidf_score,
+                desc_tfidf_score=desc_tfidf_score,
+            )
+
+            if composite >= threshold:
+                if best_match is None or composite > best_match[1]:
+                    best_match = (j - len_new, composite, tfidf_score)
 
         if best_match is None:
             continue
 
-        idx_existing, score = best_match
+        idx_existing, composite, _ = best_match
         g_existing = existing_groups[idx_existing]
 
         # Merge: move members from new group → existing group
@@ -219,6 +319,11 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
         if merged_group:
             merged_group.is_active = False
 
+        # Persist match_confidence on the target group
+        target_group = await db.get(MarketGroup, g_existing.id)
+        if target_group:
+            target_group.match_confidence = round(composite, 4)
+
         merged_ids.add(g_new.id)
         merges += 1
 
@@ -226,14 +331,14 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
             "mini_merge_matched",
             new_group_id=g_new.id,
             existing_group_id=g_existing.id,
-            score=round(score, 4),
+            score=round(composite, 4),
         )
 
     return merges
 
 
 async def _phase2_merge_cross_platform(db) -> int:
-    """Merge groups across platforms using TF-IDF similarity on canonical questions.
+    """Merge groups across platforms using TF-IDF similarity + end_date gate.
 
     Only compares groups from different platforms. Uses bulk platform lookup
     instead of per-group queries.
@@ -254,7 +359,7 @@ async def _phase2_merge_cross_platform(db) -> int:
     # Separate groups by platform
     platform_groups: dict[int, list] = {}
     all_groups_result = await db.execute(
-        select(MarketGroup.id, MarketGroup.canonical_question)
+        select(MarketGroup.id, MarketGroup.canonical_question, MarketGroup.category)
         .where(MarketGroup.is_active.is_(True))
     )
     all_groups = all_groups_result.all()
@@ -267,6 +372,10 @@ async def _phase2_merge_cross_platform(db) -> int:
     pids = sorted(platform_groups.keys())
     if len(pids) < 2:
         return 0
+
+    # Load representative end_date and description for all groups
+    all_group_ids = [g.id for g in all_groups]
+    reps = await _load_group_representatives(db, all_group_ids)
 
     merges = 0
     merged_ids: set[int] = set()
@@ -285,28 +394,78 @@ async def _phase2_merge_cross_platform(db) -> int:
             preprocessed = [preprocess(q) for q in all_questions]
             tfidf_matrix, _ = build_tfidf_matrix(preprocessed)
 
+            # Build description TF-IDF matrix
+            combined_groups = list(groups_a) + list(groups_b)
+            all_descs = []
+            for g in combined_groups:
+                rep = reps.get(g.id, {})
+                desc = rep.get("description") or ""
+                all_descs.append(preprocess(desc) if desc else "")
+
+            has_descs = any(d for d in all_descs)
+            desc_tfidf_matrix = None
+            if has_descs:
+                desc_tfidf_matrix, _ = build_tfidf_matrix(all_descs)
+
             len_a = len(groups_a)
 
             for i, g_a in enumerate(groups_a):
                 if g_a.id in merged_ids:
                     continue
 
-                candidates = get_candidates(tfidf_matrix[i], tfidf_matrix, threshold=threshold)
+                a_rep = reps.get(g_a.id, {})
+                a_end = a_rep.get("end_date")
+                a_desc = a_rep.get("description")
+
+                candidates = get_candidates(tfidf_matrix[i], tfidf_matrix, threshold=0.30)
 
                 best_match: tuple[int, float] | None = None
-                for j, score in candidates:
+                for j, tfidf_score in candidates:
                     if j < len_a:
                         continue  # Same platform
                     g_b = groups_b[j - len_a]
                     if g_b.id in merged_ids:
                         continue
-                    if best_match is None or score > best_match[1]:
-                        best_match = (j - len_a, score)
+
+                    b_rep = reps.get(g_b.id, {})
+                    b_end = b_rep.get("end_date")
+
+                    # Apply hard gate before scoring
+                    if not _end_date_gate(a_end, b_end):
+                        continue
+
+                    b_desc = b_rep.get("description")
+
+                    # Compute description TF-IDF score if available
+                    desc_tfidf_score = None
+                    if desc_tfidf_matrix is not None:
+                        from sklearn.metrics.pairwise import cosine_similarity
+                        desc_sim = cosine_similarity(
+                            desc_tfidf_matrix[i], desc_tfidf_matrix[j]
+                        ).flatten()[0]
+                        desc_tfidf_score = float(desc_sim)
+
+                    composite = score_pair(
+                        q1=g_a.canonical_question,
+                        q2=g_b.canonical_question,
+                        cat1=g_a.category,
+                        cat2=g_b.category,
+                        end1=a_end,
+                        end2=b_end,
+                        desc1=a_desc,
+                        desc2=b_desc,
+                        tfidf_score=tfidf_score,
+                        desc_tfidf_score=desc_tfidf_score,
+                    )
+
+                    if composite >= threshold:
+                        if best_match is None or composite > best_match[1]:
+                            best_match = (j - len_a, composite)
 
                 if best_match is None:
                     continue
 
-                idx_b, score = best_match
+                idx_b, composite = best_match
                 g_b = groups_b[idx_b]
 
                 # Merge: move members from g_b into g_a
@@ -330,6 +489,11 @@ async def _phase2_merge_cross_platform(db) -> int:
                 merged_group = await db.get(MarketGroup, g_b.id)
                 if merged_group:
                     merged_group.is_active = False
+
+                # Persist match_confidence on the target group
+                target_group = await db.get(MarketGroup, g_a.id)
+                if target_group:
+                    target_group.match_confidence = round(composite, 4)
 
                 merged_ids.add(g_b.id)
                 merges += 1

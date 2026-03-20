@@ -45,6 +45,7 @@ class MarketGroup(Base):
     member_count: Mapped[int] = mapped_column(Integer, default=0)
     total_volume: Mapped[float | None] = mapped_column(Float, default=None)
     total_liquidity: Mapped[float | None] = mapped_column(Float, default=None)
+    match_confidence: Mapped[float | None] = mapped_column(Float, default=None)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), init=False
