@@ -1,12 +1,12 @@
 """Shared full-text search utilities."""
 
-from app.matching.synonyms import SYNONYMS
+from app.matching.synonyms import get_all_synonyms
 
 
 def build_tsquery(query: str) -> str:
     """Build a tsquery string: AND between terms, OR with each term's synonyms.
 
-    "Crude Oil"  → "crude & oil"
+    "Crude Oil"  → "(crude | oil | wti | brent) & (oil | crude | wti | brent)"
     "bitcoin price" → "(bitcoin | btc) & price"
     "fed rate"   → "(fed | federal | reserve | fomc) & rate"
     """
@@ -14,9 +14,10 @@ def build_tsquery(query: str) -> str:
     if not words:
         return query
 
+    all_synonyms = get_all_synonyms()
     groups = []
     for word in words:
-        synonyms = SYNONYMS.get(word, [])
+        synonyms = all_synonyms.get(word, [])
         # Flatten multi-word synonyms into individual tsquery terms
         all_terms = [word]
         for syn in synonyms:

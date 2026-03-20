@@ -15,6 +15,7 @@ FROM deps AS runtime
 COPY app/ app/
 COPY alembic/ alembic/
 COPY alembic.ini .
+COPY config/ config/
 
 RUN mkdir -p /app/logs
 
