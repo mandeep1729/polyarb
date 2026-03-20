@@ -5,6 +5,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from app.config import settings
 from app.connectors.kalshi import KalshiConnector
 from app.connectors.polymarket import PolymarketConnector
 from app.database import get_background_session_factory
@@ -15,6 +16,18 @@ from app.models.price_history import PriceSnapshot
 logger = structlog.get_logger()
 
 CHUNK_SIZE = 1000
+
+
+def _top_markets_query(platform_id: int, limit: int):
+    """Query top active markets by liquidity for backfill prioritization."""
+    return (
+        select(UnifiedMarket)
+        .where(UnifiedMarket.platform_id == platform_id)
+        .where(UnifiedMarket.is_active.is_(True))
+        .where(UnifiedMarket.status == "active")
+        .order_by(UnifiedMarket.liquidity.desc().nulls_last())
+        .limit(limit)
+    )
 
 
 def _kalshi_close_dollars(candle: dict, *keys: str) -> float | None:
@@ -76,10 +89,7 @@ async def backfill_all_prices() -> None:
 
 async def _backfill_polymarket(db, platform_id: int) -> int:
     result = await db.execute(
-        select(UnifiedMarket)
-        .where(UnifiedMarket.platform_id == platform_id)
-        .where(UnifiedMarket.is_active.is_(True))
-        .where(UnifiedMarket.status == "active")
+        _top_markets_query(platform_id, settings.BACKFILL_TOP_N_MARKETS)
     )
     markets = result.scalars().all()
 
@@ -170,10 +180,7 @@ async def _backfill_polymarket(db, platform_id: int) -> int:
 
 async def _backfill_kalshi(db, platform_id: int) -> int:
     result = await db.execute(
-        select(UnifiedMarket)
-        .where(UnifiedMarket.platform_id == platform_id)
-        .where(UnifiedMarket.is_active.is_(True))
-        .where(UnifiedMarket.status == "active")
+        _top_markets_query(platform_id, settings.BACKFILL_TOP_N_MARKETS)
     )
     markets = result.scalars().all()
 

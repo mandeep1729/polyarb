@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     GROUP_FULL_REGROUP_INTERVAL_SECONDS: int = 7200
     GROUP_MERGE_THRESHOLD: float = 0.70
     BACKFILL_PRICES_INTERVAL_SECONDS: int = 86400
-    FETCH_PRICES_MAX_MARKETS: int = 500
+    BACKFILL_TOP_N_MARKETS: int = 1000
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.config import settings
 from app.connectors.kalshi import KalshiConnector
 from app.connectors.polymarket import PolymarketConnector
 from app.database import get_background_session_factory
@@ -14,28 +14,50 @@ from app.utils import first_float as _first_float
 
 logger = structlog.get_logger()
 
+SNAPSHOT_CHUNK = 1000
 
-def _top_markets_query(platform_id: int, limit: int):
-    """Query top active markets by liquidity, capped at limit."""
+
+def _active_markets_query(platform_id: int):
+    """Query all active markets for a platform, ordered by liquidity."""
     return (
         select(UnifiedMarket)
         .where(UnifiedMarket.platform_id == platform_id)
         .where(UnifiedMarket.is_active.is_(True))
         .where(UnifiedMarket.status == "active")
         .order_by(UnifiedMarket.liquidity.desc().nulls_last())
-        .limit(limit)
     )
+
+
+def _hour_now() -> datetime:
+    """Return current UTC time rounded down to the hour boundary."""
+    now = datetime.now(timezone.utc)
+    return now.replace(minute=0, second=0, microsecond=0)
+
+
+async def _upsert_snapshots(db, rows: list[dict]) -> int:
+    """Bulk upsert price snapshots. Updates prices if the hour slot already exists."""
+    total = 0
+    for i in range(0, len(rows), SNAPSHOT_CHUNK):
+        chunk = rows[i : i + SNAPSHOT_CHUNK]
+        stmt = (
+            pg_insert(PriceSnapshot.__table__)
+            .values(chunk)
+            .on_conflict_do_update(
+                constraint="uq_price_snapshots_market_ts",
+                set_={
+                    "outcome_prices": pg_insert(PriceSnapshot.__table__).excluded.outcome_prices,
+                    "volume": pg_insert(PriceSnapshot.__table__).excluded.volume,
+                },
+            )
+        )
+        result = await db.execute(stmt)
+        total += result.rowcount or 0
+    return total
 
 
 async def _update_polymarket_prices(db, platform_id: int) -> int:
-    """Fetch prices for top Polymarket markets using CLOB POST /midpoints.
-
-    Collects token_ids from market.outcomes, fetches midpoint prices in
-    batch, then merges Yes/No prices back by market.
-    """
-    result = await db.execute(
-        _top_markets_query(platform_id, settings.FETCH_PRICES_MAX_MARKETS)
-    )
+    """Fetch prices for all active Polymarket markets via CLOB POST /midpoints."""
+    result = await db.execute(_active_markets_query(platform_id))
     markets = result.scalars().all()
 
     if not markets:
@@ -75,8 +97,10 @@ async def _update_polymarket_prices(db, platform_id: int) -> int:
             market_prices[market.id] = {}
         market_prices[market.id][outcome_name] = round(price_val, 4)
 
-    updated = 0
+    ts = _hour_now()
+    snapshot_rows: list[dict] = []
     market_by_id = {m.id: m for m in markets}
+
     for market_id, prices in market_prices.items():
         market = market_by_id[market_id]
 
@@ -93,14 +117,15 @@ async def _update_polymarket_prices(db, platform_id: int) -> int:
                 except (ValueError, TypeError):
                     pass
 
-        snapshot = PriceSnapshot(
-            market_id=market.id,
-            outcome_prices=prices,
-            volume=market.volume_24h,
-        )
-        db.add(snapshot)
+        snapshot_rows.append({
+            "market_id": market.id,
+            "outcome_prices": prices,
+            "volume": market.volume_24h,
+            "timestamp": ts,
+        })
         db.add(market)
-        updated += 1
+
+    updated = await _upsert_snapshots(db, snapshot_rows)
 
     logger.info(
         "polymarket_prices_fetched",
@@ -113,10 +138,8 @@ async def _update_polymarket_prices(db, platform_id: int) -> int:
 
 
 async def _update_kalshi_prices(db, platform_id: int) -> int:
-    """Fetch prices for top Kalshi markets using batch /markets endpoint."""
-    result = await db.execute(
-        _top_markets_query(platform_id, settings.FETCH_PRICES_MAX_MARKETS)
-    )
+    """Fetch prices for all active Kalshi markets using batch /markets endpoint."""
+    result = await db.execute(_active_markets_query(platform_id))
     markets = result.scalars().all()
 
     if not markets:
@@ -132,7 +155,9 @@ async def _update_kalshi_prices(db, platform_id: int) -> int:
         if ticker:
             price_map[ticker] = pd_item
 
-    updated = 0
+    ts = _hour_now()
+    snapshot_rows: list[dict] = []
+
     for market in markets:
         raw = price_map.get(market.platform_market_id)
         if raw is None:
@@ -167,14 +192,15 @@ async def _update_kalshi_prices(db, platform_id: int) -> int:
         if vol_24h is not None:
             market.volume_24h = vol_24h
 
-        snapshot = PriceSnapshot(
-            market_id=market.id,
-            outcome_prices=prices,
-            volume=market.volume_24h,
-        )
-        db.add(snapshot)
+        snapshot_rows.append({
+            "market_id": market.id,
+            "outcome_prices": prices,
+            "volume": market.volume_24h,
+            "timestamp": ts,
+        })
         db.add(market)
-        updated += 1
+
+    updated = await _upsert_snapshots(db, snapshot_rows)
 
     logger.info(
         "kalshi_prices_fetched",
@@ -186,7 +212,7 @@ async def _update_kalshi_prices(db, platform_id: int) -> int:
 
 
 async def fetch_active_prices() -> None:
-    """Fetch prices for top active markets on each platform."""
+    """Fetch hourly prices for all active markets on each platform."""
     logger.info("fetch_active_prices_started")
 
     async with get_background_session_factory()() as db:
