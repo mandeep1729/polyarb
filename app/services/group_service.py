@@ -61,6 +61,7 @@ class GroupService:
         sort_by: str = "liquidity",
         end_date_min: str | None = None,
         end_date_max: str | None = None,
+        exclude_expired: bool = True,
         limit: int = 20,
         cursor: str | None = None,
     ) -> PaginatedResponse[GroupResponse]:
@@ -77,6 +78,16 @@ class GroupService:
                 filters.append(MarketGroup.category == db_cat)
             else:
                 filters.append(MarketGroup.category == category)
+        if exclude_expired:
+            now = datetime.now(timezone.utc)
+            active_subq = (
+                select(MarketGroupMember.group_id)
+                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+                .where(
+                    (UnifiedMarket.end_date >= now) | (UnifiedMarket.end_date.is_(None))
+                )
+            )
+            filters.append(MarketGroup.id.in_(active_subq))
         member_subq = self._end_date_subquery(end_date_min, end_date_max)
         if member_subq is not None:
             filters.append(MarketGroup.id.in_(member_subq))
@@ -110,6 +121,7 @@ class GroupService:
         sort_by: str = "liquidity",
         end_date_min: str | None = None,
         end_date_max: str | None = None,
+        exclude_expired: bool = True,
         limit: int = 20,
     ) -> PaginatedResponse[GroupResponse]:
         """Full-text search on group canonical_question with ILIKE fallback."""
@@ -130,6 +142,16 @@ class GroupService:
 
         if db_cat:
             stmt = stmt.where(MarketGroup.category == db_cat)
+        if exclude_expired:
+            now = datetime.now(timezone.utc)
+            active_subq = (
+                select(MarketGroupMember.group_id)
+                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+                .where(
+                    (UnifiedMarket.end_date >= now) | (UnifiedMarket.end_date.is_(None))
+                )
+            )
+            stmt = stmt.where(MarketGroup.id.in_(active_subq))
         member_subq = self._end_date_subquery(end_date_min, end_date_max)
         if member_subq is not None:
             stmt = stmt.where(MarketGroup.id.in_(member_subq))

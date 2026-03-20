@@ -57,6 +57,7 @@ export interface MarketFilters {
   sort?: string;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_expired?: boolean;
   cursor?: string;
   limit?: number;
 }
@@ -136,6 +137,7 @@ export interface GroupFilters {
   sort_by?: string;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_expired?: boolean;
   cursor?: string;
   limit?: number;
 }
@@ -166,6 +168,7 @@ export interface GroupSearchFilters {
   sort_by?: string;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_expired?: boolean;
   limit?: number;
 }
 

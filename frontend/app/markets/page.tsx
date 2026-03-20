@@ -26,6 +26,7 @@ function MarketsContent() {
   const [category] = useQueryState('category', { defaultValue: 'All' });
   const [sort] = useQueryState('sort', { defaultValue: 'volume_24h' });
   const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
+  const [showExpired, setShowExpired] = useState(false);
 
   const resolvedCategory = category === 'All' ? undefined : category ?? undefined;
   const resolvedSort = sort ?? 'volume_24h';
@@ -88,7 +89,7 @@ function MarketsContent() {
           />
         )}
 
-        <ExpiryFilter value={dateRange} onChange={setDateRange} />
+        <ExpiryFilter value={dateRange} onChange={setDateRange} showExpired={showExpired} onShowExpiredChange={setShowExpired} />
       </div>
 
       {/* Split columns - fill remaining height */}
@@ -104,6 +105,7 @@ function MarketsContent() {
               sort={resolvedSort}
               endDateMin={dateRange.min || undefined}
               endDateMax={dateRange.max || undefined}
+              excludeExpired={!showExpired}
             />
           ))}
         </div>

@@ -33,6 +33,7 @@ function HomeContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
+  const [showExpired, setShowExpired] = useState(false);
 
   const toggleTag = useCallback((term: string) => {
     setSelectedTags((prev) => {
@@ -66,6 +67,7 @@ function HomeContent() {
     sort_by: sortBy,
     end_date_min: dateRange.min || undefined,
     end_date_max: dateRange.max || undefined,
+    exclude_expired: !showExpired,
     limit: 24,
   });
 
@@ -77,6 +79,7 @@ function HomeContent() {
     sort_by: sortBy,
     end_date_min: dateRange.min || undefined,
     end_date_max: dateRange.max || undefined,
+    exclude_expired: !showExpired,
     limit: 24,
   });
 
@@ -160,7 +163,7 @@ function HomeContent() {
             onTagClick={toggleTag}
           />
         )}
-        <ExpiryFilter value={dateRange} onChange={setDateRange} />
+        <ExpiryFilter value={dateRange} onChange={setDateRange} showExpired={showExpired} onShowExpiredChange={setShowExpired} />
         <div className="flex flex-wrap items-center gap-3">
           <select
             value={sortBy}

@@ -25,6 +25,7 @@ async def list_markets(
     sort_by: SortField = Query(SortField.volume_24h, description="Sort field"),
     end_date_min: datetime | None = Query(None, description="Markets expiring on or after this date"),
     end_date_max: datetime | None = Query(None, description="Markets expiring on or before this date"),
+    exclude_expired: bool = Query(True, description="Hide markets whose end_date has passed"),
     limit: int = Query(20, ge=1, le=100, description="Page size"),
     cursor: str | None = Query(None, description="Pagination cursor"),
     db: AsyncSession = Depends(get_db),
@@ -37,6 +38,7 @@ async def list_markets(
         sort_by=sort_by.value,
         end_date_min=end_date_min,
         end_date_max=end_date_max,
+        exclude_expired=exclude_expired,
         limit=limit,
         cursor=cursor,
     )

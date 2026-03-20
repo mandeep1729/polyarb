@@ -38,6 +38,7 @@ interface PlatformColumnProps {
   sort: string;
   endDateMin?: string;
   endDateMax?: string;
+  excludeExpired?: boolean;
 }
 
 export default function PlatformColumn({
@@ -48,6 +49,7 @@ export default function PlatformColumn({
   sort,
   endDateMin,
   endDateMax,
+  excludeExpired,
 }: PlatformColumnProps) {
   const style = platformStyles[slug] ?? defaultStyle;
 
@@ -57,6 +59,7 @@ export default function PlatformColumn({
     sort,
     end_date_min: endDateMin,
     end_date_max: endDateMax,
+    exclude_expired: excludeExpired,
     limit: 24,
   };
 
