@@ -23,7 +23,10 @@ class SearchService:
         or_query = build_tsquery(query)
 
         ts_query = func.to_tsquery("english", or_query)
-        ts_vector = func.to_tsvector("english", UnifiedMarket.question)
+        ts_vector = func.to_tsvector(
+            "english",
+            UnifiedMarket.question + " " + func.coalesce(UnifiedMarket.description, ""),
+        )
         rank = func.ts_rank(ts_vector, ts_query)
 
         stmt = (
@@ -54,7 +57,11 @@ class SearchService:
             fallback_stmt = (
                 select(UnifiedMarket, Platform.name, Platform.slug)
                 .join(Platform, Platform.id == UnifiedMarket.platform_id)
-                .where(func.lower(UnifiedMarket.question).like(like_pattern))
+                .where(
+                    func.lower(
+                        UnifiedMarket.question + " " + func.coalesce(UnifiedMarket.description, "")
+                    ).like(like_pattern)
+                )
             )
 
             if existing_ids:
