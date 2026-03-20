@@ -1,14 +1,19 @@
 """API endpoints for market groups."""
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.models.market_group import MarketGroup, MarketGroupMember
 from app.schemas.group import (
     GroupDetailResponse,
     GroupListResponse,
     GroupSnapshotResponse,
 )
 from app.services.group_service import GroupService
+from app.tasks.group_markets import run_full_grouping
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -50,6 +55,57 @@ async def group_category_counts(
     """Return category counts for active groups."""
     service = GroupService(db)
     return await service.get_category_counts()
+
+
+_regroup_running = False
+
+
+@router.post("/regroup")
+async def trigger_regroup() -> dict:
+    """Trigger a full regrouping in the background."""
+    global _regroup_running
+    if _regroup_running:
+        raise HTTPException(status_code=409, detail="Regrouping already in progress")
+
+    async def _run() -> None:
+        global _regroup_running
+        try:
+            await run_full_grouping()
+        finally:
+            _regroup_running = False
+
+    _regroup_running = True
+    asyncio.create_task(_run())
+    return {"status": "started"}
+
+
+@router.get("/status")
+async def grouping_status(
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return grouping statistics: last run time, active group count, total markets grouped."""
+    result = await db.execute(
+        select(
+            func.count(MarketGroup.id),
+            func.max(MarketGroup.updated_at),
+        ).where(MarketGroup.is_active.is_(True))
+    )
+    row = result.one()
+    group_count = row[0]
+    last_updated = row[1]
+
+    member_result = await db.execute(
+        select(func.count(MarketGroupMember.id))
+        .join(MarketGroup, MarketGroup.id == MarketGroupMember.group_id)
+        .where(MarketGroup.is_active.is_(True))
+    )
+    member_count = member_result.scalar() or 0
+
+    return {
+        "active_groups": group_count,
+        "total_markets_grouped": member_count,
+        "last_run": last_updated.isoformat() if last_updated else None,
+    }
 
 
 @router.get("/{group_id}", response_model=GroupDetailResponse)

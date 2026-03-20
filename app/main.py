@@ -11,6 +11,7 @@ from slowapi.util import get_remote_address
 
 from app.api.arbitrage import router as arbitrage_router
 from app.api.groups import router as groups_router
+from app.api.synonyms import router as synonyms_router
 from app.api.health import router as health_router
 from app.api.markets import router as markets_router
 from app.api.search import router as search_router
@@ -68,6 +69,7 @@ app.include_router(markets_router, prefix="/api/v1")
 app.include_router(arbitrage_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1")
 app.include_router(groups_router, prefix="/api/v1")
+app.include_router(synonyms_router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

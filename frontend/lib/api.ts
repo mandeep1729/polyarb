@@ -187,3 +187,57 @@ export async function getMarketCategoryCounts(
 ): Promise<CategoryCount[]> {
   return fetcher<CategoryCount[]>(`/markets/category-counts${qs({ platform })}`);
 }
+
+// --- Synonyms ---
+
+export interface SynonymsResponse {
+  custom: string[][];
+  builtin: string[][];
+}
+
+export async function getSynonyms(): Promise<SynonymsResponse> {
+  return fetcher<SynonymsResponse>('/synonyms');
+}
+
+export async function addSynonymGroup(
+  words: string[]
+): Promise<{ custom: string[][] }> {
+  return fetcher<{ custom: string[][] }>('/synonyms', {
+    method: 'POST',
+    body: JSON.stringify({ words }),
+  });
+}
+
+export async function updateSynonymGroup(
+  index: number,
+  words: string[]
+): Promise<{ custom: string[][] }> {
+  return fetcher<{ custom: string[][] }>(`/synonyms/${index}`, {
+    method: 'PUT',
+    body: JSON.stringify({ words }),
+  });
+}
+
+export async function deleteSynonymGroup(
+  index: number
+): Promise<{ custom: string[][] }> {
+  return fetcher<{ custom: string[][] }>(`/synonyms/${index}`, {
+    method: 'DELETE',
+  });
+}
+
+// --- Grouping ---
+
+export async function triggerRegroup(): Promise<{ status: string }> {
+  return fetcher<{ status: string }>('/groups/regroup', { method: 'POST' });
+}
+
+export interface GroupingStatus {
+  active_groups: number;
+  total_markets_grouped: number;
+  last_run: string | null;
+}
+
+export async function getGroupingStatus(): Promise<GroupingStatus> {
+  return fetcher<GroupingStatus>('/groups/status');
+}
