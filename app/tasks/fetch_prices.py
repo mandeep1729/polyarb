@@ -10,10 +10,12 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from app.config import settings
 from app.connectors.kalshi import KalshiConnector
 from app.connectors.polymarket import PolymarketConnector
 from app.database import get_background_session_factory
 from app.models.market import UnifiedMarket
+from app.models.market_group import MarketGroup, MarketGroupMember
 from app.models.platform import Platform
 from app.models.price_history import PriceSnapshot
 from app.utils import first_float as _first_float
@@ -51,9 +53,38 @@ async def _upsert_snapshots(db, rows: list[dict]) -> int:
     return total
 
 
-async def _count_active(db, platform_id: int) -> int:
-    """Count active markets for a platform."""
-    result = await db.execute(
+async def _get_top_group_market_ids(db) -> set[int] | None:
+    """Return market IDs belonging to the top N groups by volume, or None if no groups exist."""
+    top_n = settings.PRICE_SYNC_TOP_N_GROUPS
+
+    # Check if any groups exist
+    group_count = (await db.execute(
+        select(func.count()).select_from(MarketGroup).where(MarketGroup.is_active.is_(True))
+    )).scalar_one()
+    if group_count == 0:
+        return None  # No groups yet — fall back to all markets
+
+    top_group_ids = (await db.execute(
+        select(MarketGroup.id)
+        .where(MarketGroup.is_active.is_(True))
+        .order_by(MarketGroup.total_volume.desc().nulls_last())
+        .limit(top_n)
+    )).scalars().all()
+
+    if not top_group_ids:
+        return None
+
+    market_ids = (await db.execute(
+        select(MarketGroupMember.market_id)
+        .where(MarketGroupMember.group_id.in_(top_group_ids))
+    )).scalars().all()
+
+    return set(market_ids)
+
+
+async def _count_active(db, platform_id: int, market_ids: set[int] | None = None) -> int:
+    """Count active markets for a platform, optionally filtered to specific IDs."""
+    stmt = (
         select(func.count())
         .select_from(UnifiedMarket)
         .where(
@@ -62,23 +93,27 @@ async def _count_active(db, platform_id: int) -> int:
             UnifiedMarket.status == "active",
         )
     )
-    return result.scalar_one()
+    if market_ids is not None:
+        stmt = stmt.where(UnifiedMarket.id.in_(market_ids))
+    return (await db.execute(stmt)).scalar_one()
 
 
-async def _load_batch(db, platform_id: int, offset: int, limit: int) -> list:
+async def _load_batch(
+    db, platform_id: int, offset: int, limit: int, market_ids: set[int] | None = None
+) -> list:
     """Load a batch of active markets ordered by liquidity."""
-    result = await db.execute(
+    stmt = (
         select(UnifiedMarket)
         .where(
             UnifiedMarket.platform_id == platform_id,
             UnifiedMarket.is_active.is_(True),
             UnifiedMarket.status == "active",
         )
-        .order_by(UnifiedMarket.liquidity.desc().nulls_last())
-        .offset(offset)
-        .limit(limit)
     )
-    return result.scalars().all()
+    if market_ids is not None:
+        stmt = stmt.where(UnifiedMarket.id.in_(market_ids))
+    stmt = stmt.order_by(UnifiedMarket.liquidity.desc().nulls_last()).offset(offset).limit(limit)
+    return (await db.execute(stmt)).scalars().all()
 
 
 async def _update_polymarket_batch(db, markets: list, connector: PolymarketConnector) -> int:
@@ -197,9 +232,11 @@ async def _update_kalshi_batch(db, markets: list, connector: KalshiConnector) ->
     return await _upsert_snapshots(db, snapshot_rows)
 
 
-async def _update_platform_prices(db, platform_id: int, slug: str) -> int:
-    """Fetch prices for all active markets on a platform, in batches."""
-    total_count = await _count_active(db, platform_id)
+async def _update_platform_prices(
+    db, platform_id: int, slug: str, market_ids: set[int] | None = None
+) -> int:
+    """Fetch prices for active markets on a platform, optionally filtered to group members."""
+    total_count = await _count_active(db, platform_id, market_ids)
     if total_count == 0:
         return 0
 
@@ -212,7 +249,7 @@ async def _update_platform_prices(db, platform_id: int, slug: str) -> int:
     updated = 0
     try:
         for offset in range(0, total_count, BATCH_SIZE):
-            markets = await _load_batch(db, platform_id, offset, BATCH_SIZE)
+            markets = await _load_batch(db, platform_id, offset, BATCH_SIZE, market_ids)
             if not markets:
                 break
 
@@ -240,11 +277,25 @@ async def _update_platform_prices(db, platform_id: int, slug: str) -> int:
 
 
 async def fetch_active_prices() -> None:
-    """Fetch hourly prices for all active markets on each platform, in batches."""
+    """Fetch hourly prices for markets in the top groups by volume.
+
+    Limited to markets belonging to the top PRICE_SYNC_TOP_N_GROUPS groups.
+    Falls back to all active markets if no groups exist yet.
+    """
     logger.info("fetch_active_prices_started")
 
     async with get_background_session_factory()() as db:
         try:
+            market_ids = await _get_top_group_market_ids(db)
+            if market_ids is not None:
+                logger.info(
+                    "price_sync_scope",
+                    top_n_groups=settings.PRICE_SYNC_TOP_N_GROUPS,
+                    market_count=len(market_ids),
+                )
+            else:
+                logger.info("price_sync_scope", mode="all_markets (no groups yet)")
+
             result = await db.execute(
                 select(Platform).where(Platform.is_active.is_(True))
             )
@@ -255,11 +306,11 @@ async def fetch_active_prices() -> None:
 
             if "polymarket" in platforms:
                 poly_count = await _update_platform_prices(
-                    db, platforms["polymarket"], "polymarket"
+                    db, platforms["polymarket"], "polymarket", market_ids
                 )
             if "kalshi" in platforms:
                 kalshi_count = await _update_platform_prices(
-                    db, platforms["kalshi"], "kalshi"
+                    db, platforms["kalshi"], "kalshi", market_ids
                 )
 
             logger.info(

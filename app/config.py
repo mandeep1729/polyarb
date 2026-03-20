@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     GROUP_MERGE_THRESHOLD: float = 0.80
     GROUP_END_DATE_GATE_DAYS: float = 1.0
     BACKFILL_PRICES_INTERVAL_SECONDS: int = 86400
+    PRICE_SYNC_TOP_N_GROUPS: int = 100
     BACKFILL_TOP_N_MARKETS: int = 1000
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
