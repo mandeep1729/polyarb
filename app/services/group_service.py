@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import Select, and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category
@@ -40,7 +40,7 @@ class GroupService:
     @staticmethod
     def _end_date_subquery(
         end_date_min: str | None, end_date_max: str | None,
-    ) -> select | None:
+    ) -> Select | None:
         """Build a subquery filtering groups by member end_date range."""
         if end_date_min is None and end_date_max is None:
             return None
