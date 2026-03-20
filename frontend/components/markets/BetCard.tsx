@@ -69,6 +69,9 @@ export default function BetCard({
             {arbSpread.toFixed(1)}%
           </span>
         )}
+        <span className="ml-auto">
+          <ExpiryCountdown endDate={market.end_date} />
+        </span>
       </div>
 
       {/* Question */}
@@ -95,10 +98,7 @@ export default function BetCard({
       {/* Sparkline + stats */}
       <div className="mb-3 flex items-center justify-between">
         <SparklineChart data={sparklineData ?? []} />
-        <div className="flex items-center gap-3">
-          <LiquidityIndicator liquidity={market.liquidity} />
-          <ExpiryCountdown endDate={market.end_date} />
-        </div>
+        <LiquidityIndicator liquidity={market.liquidity} />
       </div>
 
       {/* Volume */}
