@@ -5,7 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
 from app.tasks.backfill_prices import backfill_all_prices
-from app.tasks.cleanup import cleanup_old_snapshots
+from app.tasks.cleanup import cleanup_old_snapshots, deactivate_expired_markets
 from app.tasks.fetch_markets import fetch_all_markets
 from app.tasks.fetch_prices import fetch_active_prices
 from app.tasks.group_markets import run_full_grouping, run_mini_grouping
@@ -83,6 +83,16 @@ def create_scheduler() -> AsyncIOScheduler:
         seconds=settings.CLEANUP_INTERVAL_SECONDS,
         id="cleanup_snapshots",
         name="Clean up old price snapshots",
+    )
+
+    # Deactivate markets past expiry — runs on same interval as cleanup
+    scheduler.add_job(
+        deactivate_expired_markets,
+        "interval",
+        seconds=settings.CLEANUP_INTERVAL_SECONDS,
+        id="deactivate_expired",
+        name="Deactivate markets past expiry",
+        next_run_time=now + timedelta(minutes=2),
     )
 
     # Backfill historical prices — runs daily, idempotent (ON CONFLICT DO NOTHING)
