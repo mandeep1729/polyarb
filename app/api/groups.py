@@ -27,6 +27,7 @@ router = APIRouter(prefix="/groups", tags=["groups"])
 async def list_groups(
     category: str | None = None,
     sort_by: str = Query(default="liquidity", pattern="^(disagreement|volume|liquidity|consensus|created_at)$"),
+    expires_within: int | None = Query(None, ge=1, le=365, description="Only groups with members expiring within N days"),
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_session),
@@ -34,7 +35,7 @@ async def list_groups(
     """List active market groups with pagination."""
     service = GroupService(db)
     return await service.get_groups(
-        category=category, sort_by=sort_by, limit=limit, cursor=cursor
+        category=category, sort_by=sort_by, expires_within=expires_within, limit=limit, cursor=cursor
     )
 
 
@@ -43,13 +44,14 @@ async def search_groups(
     q: str = Query(..., min_length=2, max_length=200),
     category: str | None = None,
     sort_by: str = Query(default="liquidity", pattern="^(disagreement|volume|liquidity|consensus|created_at)$"),
+    expires_within: int | None = Query(None, ge=1, le=365, description="Only groups with members expiring within N days"),
     limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_session),
 ) -> GroupListResponse:
     """Search groups by canonical question text."""
     service = GroupService(db)
     return await service.search_groups(
-        query=q, category=category, sort_by=sort_by, limit=limit
+        query=q, category=category, sort_by=sort_by, expires_within=expires_within, limit=limit
     )
 
 
