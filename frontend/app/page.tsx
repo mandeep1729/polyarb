@@ -4,10 +4,12 @@ import { Suspense, useState, useCallback, useRef, useMemo } from 'react';
 import { useGroups } from '@/lib/queries/useGroups';
 import { useGroupSearch } from '@/lib/queries/useGroupSearch';
 import { useGroupCategoryCounts } from '@/lib/queries/useCategoryCounts';
+import { useGroupTags } from '@/lib/queries/useGroupTags';
 import { useMarkets } from '@/lib/queries/useMarkets';
 import { useArbitrage } from '@/lib/queries/useArbitrage';
 import StatsBar from '@/components/dashboard/StatsBar';
 import GroupCard from '@/components/groups/GroupCard';
+import TagCloud from '@/components/groups/TagCloud';
 import { GroupCardGridSkeleton } from '@/components/groups/GroupCardSkeleton';
 import CategoryFilter from '@/components/markets/CategoryFilter';
 import SearchInput from '@/components/markets/SearchInput';
@@ -56,6 +58,7 @@ function HomeContent() {
   });
 
   const { data: categoryCounts } = useGroupCategoryCounts();
+  const { data: tags } = useGroupTags(50);
 
   // Build counts record for CategoryFilter: display_name → count
   const countsRecord = useMemo(() => {
@@ -126,6 +129,17 @@ function HomeContent() {
         />
         <div className="flex flex-wrap items-center gap-3">
           <CategoryFilter counts={countsRecord} />
+        </div>
+        {tags && tags.length > 0 && (
+          <TagCloud
+            tags={tags}
+            activeTag={searchQuery || undefined}
+            onTagClick={(term) =>
+              setSearchQuery(searchQuery === term ? '' : term)
+            }
+          />
+        )}
+        <div className="flex flex-wrap items-center gap-3">
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value)}

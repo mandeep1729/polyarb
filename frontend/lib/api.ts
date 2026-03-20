@@ -178,6 +178,15 @@ export interface CategoryCount {
   count: number;
 }
 
+export interface GroupTag {
+  term: string;
+  count: number;
+}
+
+export async function getGroupTags(limit = 50): Promise<GroupTag[]> {
+  return fetcher<GroupTag[]>(`/groups/tags${qs({ limit })}`);
+}
+
 export async function getGroupCategoryCounts(): Promise<CategoryCount[]> {
   return fetcher<CategoryCount[]>('/groups/categories');
 }

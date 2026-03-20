@@ -49,4 +49,11 @@ class GroupSnapshotResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TagResponse(BaseModel):
+    """A single term and its frequency across active market questions."""
+
+    term: str
+    count: int
+
+
 GroupListResponse = PaginatedResponse[GroupResponse]

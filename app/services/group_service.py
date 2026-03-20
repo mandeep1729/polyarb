@@ -1,4 +1,6 @@
 """Service for querying market groups and their analytics."""
+import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, desc, func, select
@@ -150,6 +152,55 @@ class GroupService:
         return [
             {"category": row[0], "display_name": DISPLAY_NAMES.get(row[0], row[0].title()), "count": row[1]}
             for row in result.all()
+        ]
+
+    # Extra noise words for tag cloud (beyond STOP_WORDS)
+    _TAG_NOISE = frozenset({
+        "market", "price", "yes", "no", "resolve", "any", "reach",
+        "end", "win", "next", "first", "over", "under", "more", "most",
+        "new", "each", "would", "could", "should", "may", "might",
+        "top", "down", "total", "pro", "per", "get", "set", "going",
+        "will", "been", "into", "about", "out", "all", "also",
+        "spread", "season", "winner", "round", "game", "match",
+        "year", "score", "points", "finish", "highest", "lowest",
+        "number", "day", "days", "week", "month", "time",
+        "january", "february", "march", "april", "june", "july",
+        "august", "september", "october", "november", "december",
+        "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep",
+        "oct", "nov", "dec",
+    })
+
+    _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+    async def get_tags(self, limit: int = 50) -> list[dict]:
+        """Return most frequent terms from active market questions."""
+        from app.matching.text import STOP_WORDS, _PUNCTUATION_RE
+
+        result = await self._db.execute(
+            select(UnifiedMarket.question).where(
+                UnifiedMarket.is_active.is_(True),
+            )
+        )
+        questions = result.scalars().all()
+
+        counter: Counter[str] = Counter()
+        for q in questions:
+            if not q:
+                continue
+            text = _PUNCTUATION_RE.sub(" ", q.lower())
+            for word in text.split():
+                if (
+                    len(word) > 2
+                    and word not in STOP_WORDS
+                    and word not in self._TAG_NOISE
+                    and not word.isdigit()
+                    and not self._YEAR_RE.match(word)
+                ):
+                    counter[word] += 1
+
+        return [
+            {"term": term, "count": count}
+            for term, count in counter.most_common(limit)
         ]
 
     async def get_group_detail(self, group_id: int) -> GroupDetailResponse | None:

@@ -205,6 +205,75 @@ class TestGroupConsensusComputation:
             assert group["member_count"] >= 0
 
 
+class TestGroupTagsEndpoint:
+    """GET /api/v1/groups/tags"""
+
+    def test_returns_list_of_tags(self, api):
+        resp = api.get("/groups/tags", params={"limit": 10})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) <= 10
+
+    def test_tags_have_term_and_count(self, api):
+        data = api.get("/groups/tags", params={"limit": 5}).json()
+        if not data:
+            pytest.skip("No tags available")
+        tag = data[0]
+        assert "term" in tag
+        assert "count" in tag
+        assert isinstance(tag["term"], str)
+        assert isinstance(tag["count"], int)
+        assert tag["count"] > 0
+
+    def test_tags_sorted_by_count_descending(self, api):
+        data = api.get("/groups/tags", params={"limit": 20}).json()
+        if len(data) < 2:
+            pytest.skip("Not enough tags")
+        counts = [t["count"] for t in data]
+        assert counts == sorted(counts, reverse=True)
+
+    def test_limit_respected(self, api):
+        data = api.get("/groups/tags", params={"limit": 3}).json()
+        assert len(data) <= 3
+
+    def test_tags_are_lowercase(self, api):
+        data = api.get("/groups/tags", params={"limit": 20}).json()
+        for tag in data:
+            assert tag["term"] == tag["term"].lower()
+
+    def test_no_short_tokens(self, api):
+        """Tags should be longer than 2 characters."""
+        data = api.get("/groups/tags", params={"limit": 50}).json()
+        for tag in data:
+            assert len(tag["term"]) > 2
+
+    def test_no_pure_numbers(self, api):
+        """Tags should not be purely numeric."""
+        data = api.get("/groups/tags", params={"limit": 50}).json()
+        for tag in data:
+            assert not tag["term"].isdigit()
+
+    def test_limit_validation_too_low(self, api):
+        resp = api.get("/groups/tags", params={"limit": 0})
+        assert resp.status_code == 422
+
+    def test_limit_validation_too_high(self, api):
+        resp = api.get("/groups/tags", params={"limit": 201})
+        assert resp.status_code == 422
+
+    def test_default_limit(self, api):
+        data = api.get("/groups/tags").json()
+        assert isinstance(data, list)
+        assert len(data) <= 50
+
+    def test_unique_terms(self, api):
+        """Each term should appear only once."""
+        data = api.get("/groups/tags", params={"limit": 50}).json()
+        terms = [t["term"] for t in data]
+        assert len(terms) == len(set(terms))
+
+
 class TestPolymarketSlugCapture:
     """Verify Polymarket markets now have event_ticker populated."""
 

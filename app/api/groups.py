@@ -15,6 +15,7 @@ from app.schemas.group import (
     GroupDetailResponse,
     GroupListResponse,
     GroupSnapshotResponse,
+    TagResponse,
 )
 from app.services.group_service import GroupService
 from app.tasks.group_markets import _load_group_representatives, run_full_grouping
@@ -261,6 +262,17 @@ async def audit_equivalence(
                             })
 
     return {"would_split": would_split, "would_merge": would_merge}
+
+
+@router.get("/tags", response_model=list[TagResponse])
+async def group_tags(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_session),
+) -> list[TagResponse]:
+    """Return most frequent terms from active market questions."""
+    service = GroupService(db)
+    rows = await service.get_tags(limit=limit)
+    return [TagResponse(**r) for r in rows]
 
 
 @router.get("/{group_id}", response_model=GroupDetailResponse)
