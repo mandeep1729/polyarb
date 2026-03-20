@@ -1,7 +1,13 @@
+"""Hourly price fetcher for all active markets.
+
+Processes markets in batches of BATCH_SIZE, committing after each batch
+so progress is saved incrementally and memory stays bounded.
+"""
+
 from datetime import datetime, timezone
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.connectors.kalshi import KalshiConnector
@@ -14,18 +20,8 @@ from app.utils import first_float as _first_float
 
 logger = structlog.get_logger()
 
+BATCH_SIZE = 500
 SNAPSHOT_CHUNK = 1000
-
-
-def _active_markets_query(platform_id: int):
-    """Query all active markets for a platform, ordered by liquidity."""
-    return (
-        select(UnifiedMarket)
-        .where(UnifiedMarket.platform_id == platform_id)
-        .where(UnifiedMarket.is_active.is_(True))
-        .where(UnifiedMarket.status == "active")
-        .order_by(UnifiedMarket.liquidity.desc().nulls_last())
-    )
 
 
 def _hour_now() -> datetime:
@@ -35,7 +31,7 @@ def _hour_now() -> datetime:
 
 
 async def _upsert_snapshots(db, rows: list[dict]) -> int:
-    """Bulk upsert price snapshots. Updates prices if the hour slot already exists."""
+    """Bulk upsert price snapshots, updating if the hour slot already exists."""
     total = 0
     for i in range(0, len(rows), SNAPSHOT_CHUNK):
         chunk = rows[i : i + SNAPSHOT_CHUNK]
@@ -55,20 +51,42 @@ async def _upsert_snapshots(db, rows: list[dict]) -> int:
     return total
 
 
-async def _update_polymarket_prices(db, platform_id: int) -> int:
-    """Fetch prices for all active Polymarket markets via CLOB POST /midpoints."""
-    result = await db.execute(_active_markets_query(platform_id))
-    markets = result.scalars().all()
+async def _count_active(db, platform_id: int) -> int:
+    """Count active markets for a platform."""
+    result = await db.execute(
+        select(func.count())
+        .select_from(UnifiedMarket)
+        .where(
+            UnifiedMarket.platform_id == platform_id,
+            UnifiedMarket.is_active.is_(True),
+            UnifiedMarket.status == "active",
+        )
+    )
+    return result.scalar_one()
 
-    if not markets:
-        return 0
 
-    # Build token_id -> (market, outcome_name) lookup
+async def _load_batch(db, platform_id: int, offset: int, limit: int) -> list:
+    """Load a batch of active markets ordered by liquidity."""
+    result = await db.execute(
+        select(UnifiedMarket)
+        .where(
+            UnifiedMarket.platform_id == platform_id,
+            UnifiedMarket.is_active.is_(True),
+            UnifiedMarket.status == "active",
+        )
+        .order_by(UnifiedMarket.liquidity.desc().nulls_last())
+        .offset(offset)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def _update_polymarket_batch(db, markets: list, connector: PolymarketConnector) -> int:
+    """Fetch and store prices for a batch of Polymarket markets."""
     token_to_market: dict[str, tuple[UnifiedMarket, str]] = {}
     all_token_ids: list[str] = []
     for market in markets:
-        outcomes = market.outcomes or {}
-        for outcome_name, token_id in outcomes.items():
+        for outcome_name, token_id in (market.outcomes or {}).items():
             if token_id:
                 token_to_market[token_id] = (market, outcome_name)
                 all_token_ids.append(token_id)
@@ -76,13 +94,8 @@ async def _update_polymarket_prices(db, platform_id: int) -> int:
     if not all_token_ids:
         return 0
 
-    connector = PolymarketConnector()
-    try:
-        midpoints = await connector.fetch_prices(all_token_ids)
-    finally:
-        await connector.close()
+    midpoints = await connector.fetch_prices(all_token_ids)
 
-    # Merge midpoints back into per-market outcome_prices dicts
     market_prices: dict[int, dict[str, float]] = {}
     for token_id, price_str in midpoints.items():
         entry = token_to_market.get(token_id)
@@ -93,9 +106,7 @@ async def _update_polymarket_prices(db, platform_id: int) -> int:
             price_val = float(price_str)
         except (ValueError, TypeError):
             continue
-        if market.id not in market_prices:
-            market_prices[market.id] = {}
-        market_prices[market.id][outcome_name] = round(price_val, 4)
+        market_prices.setdefault(market.id, {})[outcome_name] = round(price_val, 4)
 
     ts = _hour_now()
     snapshot_rows: list[dict] = []
@@ -103,7 +114,6 @@ async def _update_polymarket_prices(db, platform_id: int) -> int:
 
     for market_id, prices in market_prices.items():
         market = market_by_id[market_id]
-
         old_prices = market.outcome_prices or {}
         market.outcome_prices = prices
         market.last_synced_at = datetime.now(timezone.utc)
@@ -125,27 +135,11 @@ async def _update_polymarket_prices(db, platform_id: int) -> int:
         })
         db.add(market)
 
-    updated = await _upsert_snapshots(db, snapshot_rows)
-
-    logger.info(
-        "polymarket_prices_fetched",
-        markets_queried=len(markets),
-        tokens_sent=len(all_token_ids),
-        midpoints_received=len(midpoints),
-        markets_updated=updated,
-    )
-    return updated
+    return await _upsert_snapshots(db, snapshot_rows)
 
 
-async def _update_kalshi_prices(db, platform_id: int) -> int:
-    """Fetch prices for all active Kalshi markets using batch /markets endpoint."""
-    result = await db.execute(_active_markets_query(platform_id))
-    markets = result.scalars().all()
-
-    if not markets:
-        return 0
-
-    connector = KalshiConnector()
+async def _update_kalshi_batch(db, markets: list, connector: KalshiConnector) -> int:
+    """Fetch and store prices for a batch of Kalshi markets."""
     market_ids = [m.platform_market_id for m in markets]
     price_data = await connector.fetch_prices(market_ids)
 
@@ -200,19 +194,53 @@ async def _update_kalshi_prices(db, platform_id: int) -> int:
         })
         db.add(market)
 
-    updated = await _upsert_snapshots(db, snapshot_rows)
+    return await _upsert_snapshots(db, snapshot_rows)
 
-    logger.info(
-        "kalshi_prices_fetched",
-        markets_queried=len(markets),
-        api_results=len(price_data),
-        markets_updated=updated,
-    )
+
+async def _update_platform_prices(db, platform_id: int, slug: str) -> int:
+    """Fetch prices for all active markets on a platform, in batches."""
+    total_count = await _count_active(db, platform_id)
+    if total_count == 0:
+        return 0
+
+    connector: PolymarketConnector | KalshiConnector
+    if slug == "polymarket":
+        connector = PolymarketConnector()
+    else:
+        connector = KalshiConnector()
+
+    updated = 0
+    try:
+        for offset in range(0, total_count, BATCH_SIZE):
+            markets = await _load_batch(db, platform_id, offset, BATCH_SIZE)
+            if not markets:
+                break
+
+            if slug == "polymarket":
+                batch_count = await _update_polymarket_batch(db, markets, connector)
+            else:
+                batch_count = await _update_kalshi_batch(db, markets, connector)
+
+            await db.commit()
+            updated += batch_count
+
+            logger.info(
+                "price_batch_complete",
+                platform=slug,
+                batch_offset=offset,
+                batch_updated=batch_count,
+                total_so_far=updated,
+                total_markets=total_count,
+            )
+    finally:
+        if slug == "polymarket":
+            await connector.close()
+
     return updated
 
 
 async def fetch_active_prices() -> None:
-    """Fetch hourly prices for all active markets on each platform."""
+    """Fetch hourly prices for all active markets on each platform, in batches."""
     logger.info("fetch_active_prices_started")
 
     async with get_background_session_factory()() as db:
@@ -226,11 +254,14 @@ async def fetch_active_prices() -> None:
             kalshi_count = 0
 
             if "polymarket" in platforms:
-                poly_count = await _update_polymarket_prices(db, platforms["polymarket"])
+                poly_count = await _update_platform_prices(
+                    db, platforms["polymarket"], "polymarket"
+                )
             if "kalshi" in platforms:
-                kalshi_count = await _update_kalshi_prices(db, platforms["kalshi"])
+                kalshi_count = await _update_platform_prices(
+                    db, platforms["kalshi"], "kalshi"
+                )
 
-            await db.commit()
             logger.info(
                 "fetch_active_prices_complete",
                 polymarket=poly_count,

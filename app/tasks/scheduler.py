@@ -19,7 +19,7 @@ def create_scheduler() -> AsyncIOScheduler:
         job_defaults={
             "coalesce": True,
             "max_instances": 1,
-            "misfire_grace_time": 60,
+            "misfire_grace_time": 600,
         }
     )
 
@@ -27,7 +27,7 @@ def create_scheduler() -> AsyncIOScheduler:
 
     now = datetime.now(timezone.utc)
 
-    # Stagger jobs so they don't all compete for API/DB at startup
+    # Market metadata sync: every 15 min (takes ~5 min to run)
     scheduler.add_job(
         fetch_all_markets,
         "interval",
@@ -37,44 +37,41 @@ def create_scheduler() -> AsyncIOScheduler:
         next_run_time=now,
     )
 
-    # Price fetch starts after markets have had time to sync
+    # Hourly price fetch for all active markets (batched, ~5-10 min)
     scheduler.add_job(
         fetch_active_prices,
         "interval",
         seconds=settings.FETCH_PRICES_INTERVAL_SECONDS,
         id="fetch_prices",
         name="Fetch prices for active markets",
-        next_run_time=now + timedelta(minutes=5),
+        next_run_time=now + timedelta(minutes=6),
     )
 
-    # Matching starts after initial market fetch
     scheduler.add_job(
         run_matching,
         "interval",
         seconds=settings.MATCH_MARKETS_INTERVAL_SECONDS,
         id="match_markets",
         name="Match markets across platforms",
-        next_run_time=now + timedelta(minutes=6),
+        next_run_time=now + timedelta(minutes=12),
     )
 
-    # Mini-grouping: every 10 minutes (new/ungrouped markets only)
     scheduler.add_job(
         run_mini_grouping,
         "interval",
         seconds=settings.GROUP_MARKETS_INTERVAL_SECONDS,
         id="group_markets_mini",
         name="Mini-group new markets",
-        next_run_time=now + timedelta(minutes=7),
+        next_run_time=now + timedelta(minutes=13),
     )
 
-    # Full regrouping: every 2 hours (exhaustive cross-platform merge)
     scheduler.add_job(
         run_full_grouping,
         "interval",
         seconds=settings.GROUP_FULL_REGROUP_INTERVAL_SECONDS,
         id="group_markets_full",
         name="Full regroup all markets",
-        next_run_time=now + timedelta(minutes=10),
+        next_run_time=now + timedelta(minutes=14),
     )
 
     scheduler.add_job(
@@ -85,7 +82,6 @@ def create_scheduler() -> AsyncIOScheduler:
         name="Clean up old price snapshots",
     )
 
-    # Deactivate markets past expiry — runs on same interval as cleanup
     scheduler.add_job(
         deactivate_expired_markets,
         "interval",
@@ -95,14 +91,14 @@ def create_scheduler() -> AsyncIOScheduler:
         next_run_time=now + timedelta(minutes=2),
     )
 
-    # Backfill historical prices — runs daily, idempotent (ON CONFLICT DO NOTHING)
+    # Backfill top 1000 markets with full history — daily, idempotent
     scheduler.add_job(
         backfill_all_prices,
         "interval",
         seconds=settings.BACKFILL_PRICES_INTERVAL_SECONDS,
         id="backfill_prices",
         name="Backfill historical prices",
-        next_run_time=now + timedelta(minutes=15),
+        next_run_time=now + timedelta(minutes=8),
     )
 
     logger.info(
