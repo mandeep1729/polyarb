@@ -2,7 +2,7 @@ import json
 import re
 from pathlib import Path
 
-CUSTOM_SYNONYMS_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "custom_synonyms.json"
+CUSTOM_SYNONYMS_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "custom_synonyms.json"
 
 SYNONYMS: dict[str, list[str]] = {
     # Crypto
