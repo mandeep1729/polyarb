@@ -6,7 +6,7 @@ from app.models.market import UnifiedMarket
 from app.models.platform import Platform
 from app.schemas.market import MarketResponse
 from app.services.market_service import MarketService
-from app.services.search_utils import build_or_tsquery
+from app.services.search_utils import build_tsquery
 
 
 class SearchService:
@@ -20,7 +20,7 @@ class SearchService:
         platform: str | None = None,
         limit: int = 20,
     ) -> list[MarketResponse]:
-        or_query = build_or_tsquery(query)
+        or_query = build_tsquery(query)
 
         ts_query = func.to_tsquery("english", or_query)
         ts_vector = func.to_tsvector("english", UnifiedMarket.question)
