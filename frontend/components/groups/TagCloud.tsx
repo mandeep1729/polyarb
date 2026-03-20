@@ -5,13 +5,13 @@ import { cn } from '@/lib/utils/format';
 
 interface TagCloudProps {
   tags: { term: string; count: number }[];
-  activeTag?: string;
+  activeTags: Set<string>;
   onTagClick: (term: string) => void;
 }
 
 const INITIAL_COUNT = 20;
 
-export default function TagCloud({ tags, activeTag, onTagClick }: TagCloudProps) {
+export default function TagCloud({ tags, activeTags, onTagClick }: TagCloudProps) {
   const [expanded, setExpanded] = useState(false);
 
   if (tags.length === 0) return null;
@@ -22,7 +22,7 @@ export default function TagCloud({ tags, activeTag, onTagClick }: TagCloudProps)
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
         {visible.map((tag, i) => {
-          const isActive = activeTag === tag.term;
+          const isActive = activeTags.has(tag.term);
           const sizeClass =
             i < 5
               ? 'text-sm font-semibold'

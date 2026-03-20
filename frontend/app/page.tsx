@@ -31,12 +31,29 @@ function HomeContent() {
   const [category] = useQueryState('category');
   const [sortBy, setSortBy] = useState('liquidity');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
+
+  const toggleTag = useCallback((term: string) => {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(term)) next.delete(term);
+      else next.add(term);
+      return next;
+    });
+  }, []);
+
+  // Combine text search + selected tags into one query
+  const combinedQuery = useMemo(() => {
+    const parts = [...selectedTags];
+    if (searchQuery.length >= 2) parts.push(searchQuery);
+    return parts.join(' ');
+  }, [searchQuery, selectedTags]);
 
   const { data: marketsData } = useMarkets({ limit: 1 });
   const { data: arbData } = useArbitrage({ limit: 100 });
 
-  const isSearching = searchQuery.length >= 2;
+  const isSearching = combinedQuery.length >= 2;
 
   const {
     data: groupsData,
@@ -55,7 +72,7 @@ function HomeContent() {
   const {
     data: searchData,
     isLoading: searchLoading,
-  } = useGroupSearch(searchQuery, {
+  } = useGroupSearch(combinedQuery, {
     category: category ?? undefined,
     sort_by: sortBy,
     end_date_min: dateRange.min || undefined,
@@ -139,10 +156,8 @@ function HomeContent() {
         {tags && tags.length > 0 && (
           <TagCloud
             tags={tags}
-            activeTag={searchQuery || undefined}
-            onTagClick={(term) =>
-              setSearchQuery(searchQuery === term ? '' : term)
-            }
+            activeTags={selectedTags}
+            onTagClick={toggleTag}
           />
         )}
         <ExpiryFilter value={dateRange} onChange={setDateRange} />

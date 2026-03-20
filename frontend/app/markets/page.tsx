@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useMemo } from 'react';
+import { Suspense, useState, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQueryState } from 'nuqs';
 import SearchInput from '@/components/markets/SearchInput';
@@ -8,8 +8,10 @@ import CategoryFilter from '@/components/markets/CategoryFilter';
 import ExpiryFilter, { type DateRange } from '@/components/markets/ExpiryFilter';
 import SortSelect from '@/components/markets/SortSelect';
 import PlatformColumn from '@/components/markets/PlatformColumn';
+import TagCloud from '@/components/groups/TagCloud';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
+import { useGroupTags } from '@/lib/queries/useGroupTags';
 
 const PLATFORMS = [
   { slug: 'polymarket', label: 'Polymarket' },
@@ -20,6 +22,7 @@ function MarketsContent() {
   const searchParams = useSearchParams();
   const initialQ = searchParams.get('q') ?? '';
   const [searchQuery, setSearchQuery] = useState(initialQ);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [category] = useQueryState('category', { defaultValue: 'All' });
   const [sort] = useQueryState('sort', { defaultValue: 'volume_24h' });
   const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
@@ -27,7 +30,24 @@ function MarketsContent() {
   const resolvedCategory = category === 'All' ? undefined : category ?? undefined;
   const resolvedSort = sort ?? 'volume_24h';
 
+  const toggleTag = useCallback((term: string) => {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(term)) next.delete(term);
+      else next.add(term);
+      return next;
+    });
+  }, []);
+
+  // Combine text search + selected tags into one query
+  const combinedQuery = useMemo(() => {
+    const parts = [...selectedTags];
+    if (searchQuery.length >= 2) parts.push(searchQuery);
+    return parts.join(' ');
+  }, [searchQuery, selectedTags]);
+
   const { data: categoryCounts } = useMarketCategoryCounts();
+  const { data: tags } = useGroupTags(50);
 
   const countsRecord = useMemo(() => {
     if (!categoryCounts) return undefined;
@@ -41,7 +61,7 @@ function MarketsContent() {
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* Top controls - fixed height */}
-      <div className="shrink-0 space-y-4 px-4 pt-6 pb-4">
+      <div className="shrink-0 space-y-3 px-4 pt-6 pb-4">
         <div>
           <h1 className="mb-1 text-2xl font-bold text-white">Markets</h1>
           <p className="text-sm text-gray-500">
@@ -59,6 +79,15 @@ function MarketsContent() {
         </div>
 
         <CategoryFilter counts={countsRecord} />
+
+        {tags && tags.length > 0 && (
+          <TagCloud
+            tags={tags}
+            activeTags={selectedTags}
+            onTagClick={toggleTag}
+          />
+        )}
+
         <ExpiryFilter value={dateRange} onChange={setDateRange} />
       </div>
 
@@ -70,7 +99,7 @@ function MarketsContent() {
               key={p.slug}
               slug={p.slug}
               label={p.label}
-              searchQuery={searchQuery}
+              searchQuery={combinedQuery}
               category={resolvedCategory}
               sort={resolvedSort}
               endDateMin={dateRange.min || undefined}
