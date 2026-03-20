@@ -56,35 +56,46 @@ def _round_to_hour(ts: int) -> datetime:
 
 
 async def backfill_all_prices() -> None:
-    """Backfill historical prices for all active markets from platform APIs.
+    """Backfill historical prices for top markets from platform APIs.
 
     Idempotent: uses ON CONFLICT DO NOTHING on (market_id, timestamp).
     Safe to re-run — skips already-inserted timestamps.
     """
     logger.info("backfill_all_prices_started")
 
-    async with get_background_session_factory()() as db:
-        try:
+    poly_total = 0
+    kalshi_total = 0
+
+    # Use separate sessions per platform to avoid long-lived transactions
+    try:
+        async with get_background_session_factory()() as db:
             result = await db.execute(
                 select(Platform).where(Platform.is_active.is_(True))
             )
             platforms = {p.slug: p.id for p in result.scalars().all()}
+    except Exception as exc:
+        logger.error("backfill_load_platforms_failed", error=str(exc))
+        return
 
-            poly_total = 0
-            kalshi_total = 0
-
-            if "polymarket" in platforms:
+    if "polymarket" in platforms:
+        try:
+            async with get_background_session_factory()() as db:
                 poly_total = await _backfill_polymarket(db, platforms["polymarket"])
-            if "kalshi" in platforms:
-                kalshi_total = await _backfill_kalshi(db, platforms["kalshi"])
-
-            logger.info(
-                "backfill_all_prices_complete",
-                polymarket_inserted=poly_total,
-                kalshi_inserted=kalshi_total,
-            )
         except Exception as exc:
-            logger.error("backfill_all_prices_failed", error=str(exc))
+            logger.error("backfill_polymarket_failed", error=str(exc))
+
+    if "kalshi" in platforms:
+        try:
+            async with get_background_session_factory()() as db:
+                kalshi_total = await _backfill_kalshi(db, platforms["kalshi"])
+        except Exception as exc:
+            logger.error("backfill_kalshi_failed", error=str(exc))
+
+    logger.info(
+        "backfill_all_prices_complete",
+        polymarket_inserted=poly_total,
+        kalshi_inserted=kalshi_total,
+    )
 
 
 async def _backfill_polymarket(db, platform_id: int) -> int:

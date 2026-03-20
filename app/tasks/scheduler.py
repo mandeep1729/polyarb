@@ -92,13 +92,14 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     # Backfill top 1000 markets with full history — daily, idempotent
+    # Starts 30 min after boot to avoid competing with initial market sync + price fetch
     scheduler.add_job(
         backfill_all_prices,
         "interval",
         seconds=settings.BACKFILL_PRICES_INTERVAL_SECONDS,
         id="backfill_prices",
         name="Backfill historical prices",
-        next_run_time=now + timedelta(minutes=8),
+        next_run_time=now + timedelta(minutes=30),
     )
 
     logger.info(
