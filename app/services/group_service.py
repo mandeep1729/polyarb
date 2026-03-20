@@ -34,12 +34,15 @@ class GroupService:
     async def get_groups(
         self,
         category: str | None = None,
-        sort_by: str = "disagreement",
+        sort_by: str = "liquidity",
         limit: int = 20,
         cursor: str | None = None,
     ) -> PaginatedResponse[GroupResponse]:
         """Return paginated list of active groups."""
-        base = select(MarketGroup).where(MarketGroup.is_active.is_(True))
+        base = select(MarketGroup).where(
+            MarketGroup.is_active.is_(True),
+            MarketGroup.member_count > 1,
+        )
 
         filters = []
         if category:

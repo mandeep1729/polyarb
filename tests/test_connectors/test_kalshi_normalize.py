@@ -1,17 +1,16 @@
 """Tests for KalshiConnector.normalize() outcome labeling."""
 
-from unittest.mock import patch, MagicMock
-
 from app.connectors.kalshi import KalshiConnector
 
 
 def _make_connector() -> KalshiConnector:
-    """Create a KalshiConnector without hitting real APIs."""
-    with patch("app.connectors.kalshi.KalshiClient"), \
-         patch("app.connectors.kalshi.Configuration"), \
-         patch("app.connectors.kalshi.EventsApi"), \
-         patch("app.connectors.kalshi.MarketApi"):
-        return KalshiConnector()
+    """Create a KalshiConnector without hitting real APIs.
+
+    normalize() is a pure transformation method that doesn't use any
+    instance attributes, so we bypass __init__ entirely.
+    """
+    connector = object.__new__(KalshiConnector)
+    return connector
 
 
 class TestNormalizeOutcomes:

@@ -23,7 +23,7 @@ export default function Home() {
 
 function HomeContent() {
   const [category] = useQueryState('category');
-  const [sortBy, setSortBy] = useState('disagreement');
+  const [sortBy, setSortBy] = useState('liquidity');
 
   const { data: marketsData } = useMarkets({ limit: 1 });
   const { data: arbData } = useArbitrage({ limit: 100 });
@@ -92,9 +92,9 @@ function HomeContent() {
           onChange={(e) => setSortBy(e.target.value)}
           className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
         >
+          <option value="liquidity">Liquidity</option>
           <option value="disagreement">Highest Spread</option>
           <option value="volume">Volume</option>
-          <option value="liquidity">Liquidity</option>
           <option value="consensus">Consensus</option>
           <option value="created_at">Newest</option>
         </select>

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/groups", tags=["groups"])
 @router.get("", response_model=GroupListResponse)
 async def list_groups(
     category: str | None = None,
-    sort_by: str = Query(default="disagreement", pattern="^(disagreement|volume|liquidity|consensus|created_at)$"),
+    sort_by: str = Query(default="liquidity", pattern="^(disagreement|volume|liquidity|consensus|created_at)$"),
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_session),

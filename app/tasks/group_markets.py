@@ -3,6 +3,10 @@
 Phase 1: Seed groups from platform-native clusters (event_ticker).
 Phase 2: Merge cross-platform groups via TF-IDF similarity.
 Phase 3: Compute group analytics (consensus, disagreement, best-odds).
+
+Two entry points:
+- run_mini_grouping(): processes only ungrouped markets (every 10 min)
+- run_full_grouping(): exhaustive cross-platform merge (every 2 hours)
 """
 from datetime import datetime, timezone
 
@@ -21,11 +25,24 @@ from app.models.platform import Platform
 logger = structlog.get_logger()
 
 
-async def _phase1_seed_groups(db) -> int:
+async def _get_ungrouped_market_ids(db) -> set[int]:
+    """Return IDs of active markets that have no group membership."""
+    result = await db.execute(
+        select(UnifiedMarket.id)
+        .outerjoin(MarketGroupMember, MarketGroupMember.market_id == UnifiedMarket.id)
+        .where(UnifiedMarket.is_active.is_(True))
+        .where(MarketGroupMember.id.is_(None))
+    )
+    return {row[0] for row in result.all()}
+
+
+async def _phase1_seed_groups(db, market_ids: set[int] | None = None) -> int:
     """Seed groups from markets with event_ticker.
 
     Markets sharing the same event_ticker belong to the same group.
     Uses bulk operations to avoid O(n) individual queries.
+
+    When market_ids is provided, only those markets are considered.
     """
     # 1. Load existing groups into a lookup
     existing_result = await db.execute(
@@ -36,13 +53,17 @@ async def _phase1_seed_groups(db) -> int:
         row[1]: row[0] for row in existing_result.all()
     }
 
-    # 2. Get all markets with event_tickers
-    result = await db.execute(
+    # 2. Get markets with event_tickers
+    query = (
         select(UnifiedMarket.id, UnifiedMarket.event_ticker, UnifiedMarket.question, UnifiedMarket.category)
         .where(UnifiedMarket.is_active.is_(True))
         .where(UnifiedMarket.event_ticker.isnot(None))
         .where(UnifiedMarket.event_ticker != "")
     )
+    if market_ids is not None:
+        query = query.where(UnifiedMarket.id.in_(market_ids))
+
+    result = await db.execute(query)
     markets = result.all()
 
     # 3. Group markets by event_ticker
@@ -92,6 +113,123 @@ async def _phase1_seed_groups(db) -> int:
             await db.execute(stmt)
 
     return groups_created
+
+
+async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
+    """Mini merge: try to slot newly-seeded groups into existing cross-platform groups.
+
+    Only compares groups containing the given market_ids against all other groups.
+    This is O(new × existing) instead of O(all²).
+    """
+    threshold = settings.GROUP_MERGE_THRESHOLD
+
+    # Find group IDs that contain any of the new market_ids
+    new_group_result = await db.execute(
+        select(MarketGroupMember.group_id)
+        .where(MarketGroupMember.market_id.in_(market_ids))
+        .distinct()
+    )
+    new_group_ids = {row[0] for row in new_group_result.all()}
+    if not new_group_ids:
+        return 0
+
+    # Load all active groups
+    all_groups_result = await db.execute(
+        select(MarketGroup.id, MarketGroup.canonical_question)
+        .where(MarketGroup.is_active.is_(True))
+    )
+    all_groups = all_groups_result.all()
+
+    new_groups = [g for g in all_groups if g.id in new_group_ids]
+    existing_groups = [g for g in all_groups if g.id not in new_group_ids]
+
+    if not new_groups or not existing_groups:
+        return 0
+
+    # Bulk load group→platform mapping
+    group_ids_all = [g.id for g in new_groups] + [g.id for g in existing_groups]
+    platform_result = await db.execute(
+        select(
+            MarketGroupMember.group_id,
+            UnifiedMarket.platform_id,
+        )
+        .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+        .where(MarketGroupMember.group_id.in_(group_ids_all))
+        .distinct(MarketGroupMember.group_id)
+    )
+    group_platform: dict[int, int] = {row[0]: row[1] for row in platform_result.all()}
+
+    # Build TF-IDF: new groups first, then existing groups
+    all_questions = (
+        [g.canonical_question for g in new_groups]
+        + [g.canonical_question for g in existing_groups]
+    )
+    preprocessed = [preprocess(q) for q in all_questions]
+    tfidf_matrix, _ = build_tfidf_matrix(preprocessed)
+
+    len_new = len(new_groups)
+    merges = 0
+    merged_ids: set[int] = set()
+
+    for i, g_new in enumerate(new_groups):
+        if g_new.id in merged_ids:
+            continue
+
+        new_pid = group_platform.get(g_new.id)
+        candidates = get_candidates(tfidf_matrix[i], tfidf_matrix, threshold=threshold)
+
+        best_match: tuple[int, float] | None = None
+        for j, score in candidates:
+            if j < len_new:
+                continue  # Skip other new groups
+            g_existing = existing_groups[j - len_new]
+            if g_existing.id in merged_ids:
+                continue
+            existing_pid = group_platform.get(g_existing.id)
+            if new_pid is not None and existing_pid is not None and new_pid == existing_pid:
+                continue  # Same platform, skip
+            if best_match is None or score > best_match[1]:
+                best_match = (j - len_new, score)
+
+        if best_match is None:
+            continue
+
+        idx_existing, score = best_match
+        g_existing = existing_groups[idx_existing]
+
+        # Merge: move members from new group → existing group
+        members_new = await db.execute(
+            select(MarketGroupMember.market_id).where(
+                MarketGroupMember.group_id == g_new.id
+            )
+        )
+        member_ids = [r[0] for r in members_new.all()]
+        if member_ids:
+            vals = [{"group_id": g_existing.id, "market_id": mid} for mid in member_ids]
+            await db.execute(
+                pg_insert(MarketGroupMember).values(vals).on_conflict_do_nothing(
+                    constraint="uq_group_market"
+                )
+            )
+
+        await db.execute(
+            delete(MarketGroupMember).where(MarketGroupMember.group_id == g_new.id)
+        )
+        merged_group = await db.get(MarketGroup, g_new.id)
+        if merged_group:
+            merged_group.is_active = False
+
+        merged_ids.add(g_new.id)
+        merges += 1
+
+        logger.info(
+            "mini_merge_matched",
+            new_group_id=g_new.id,
+            existing_group_id=g_existing.id,
+            score=round(score, 4),
+        )
+
+    return merges
 
 
 async def _phase2_merge_cross_platform(db) -> int:
@@ -320,9 +458,49 @@ async def _phase3_compute_analytics(db) -> int:
     return updated
 
 
-async def run_grouping() -> None:
-    """Main entry point for the grouping background task."""
-    logger.info("run_grouping_started")
+async def run_mini_grouping() -> None:
+    """Mini-grouping: process only ungrouped markets, then refresh analytics."""
+    logger.info("run_mini_grouping_started")
+
+    async with get_background_session_factory()() as db:
+        try:
+            ungrouped = await _get_ungrouped_market_ids(db)
+
+            if not ungrouped:
+                logger.info("run_mini_grouping_no_ungrouped")
+                updated = await _phase3_compute_analytics(db)
+                await db.commit()
+                logger.info("run_mini_grouping_complete", ungrouped=0, created=0, merged=0, analytics_updated=updated)
+                return
+
+            logger.info("run_mini_grouping_found_ungrouped", count=len(ungrouped))
+
+            created = await _phase1_seed_groups(db, market_ids=ungrouped)
+            await db.commit()
+            logger.info("mini_group_phase1_complete", groups_created=created)
+
+            merged = await _phase2_assign_to_existing_groups(db, ungrouped)
+            await db.commit()
+            logger.info("mini_group_phase2_complete", merges=merged)
+
+            updated = await _phase3_compute_analytics(db)
+            await db.commit()
+
+            logger.info(
+                "run_mini_grouping_complete",
+                ungrouped=len(ungrouped),
+                created=created,
+                merged=merged,
+                analytics_updated=updated,
+            )
+        except Exception as exc:
+            await db.rollback()
+            logger.error("run_mini_grouping_failed", error=str(exc), exc_info=True)
+
+
+async def run_full_grouping() -> None:
+    """Full regrouping: exhaustive cross-platform merge across all groups."""
+    logger.info("run_full_grouping_started")
 
     async with get_background_session_factory()() as db:
         try:
@@ -339,11 +517,11 @@ async def run_grouping() -> None:
             logger.info("group_phase3_complete", groups_updated=updated)
 
             logger.info(
-                "run_grouping_complete",
+                "run_full_grouping_complete",
                 created=created,
                 merged=merged,
                 analytics_updated=updated,
             )
         except Exception as exc:
             await db.rollback()
-            logger.error("run_grouping_failed", error=str(exc), exc_info=True)
+            logger.error("run_full_grouping_failed", error=str(exc), exc_info=True)
