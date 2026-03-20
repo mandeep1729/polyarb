@@ -304,18 +304,21 @@ class KalshiConnector:
         yes_ask = first_float(raw, "yes_ask", "yes_ask_dollars")
         no_ask = first_float(raw, "no_ask", "no_ask_dollars")
 
+        yes_label = raw.get("yes_sub_title") or "Yes"
+        no_label = raw.get("no_sub_title") or "No"
+
         outcome_prices: dict[str, float] = {}
         if yes_bid is not None:
-            outcome_prices["Yes"] = round(yes_bid, 4)
+            outcome_prices[yes_label] = round(yes_bid, 4)
         if no_bid is not None:
-            outcome_prices["No"] = round(no_bid, 4)
+            outcome_prices[no_label] = round(no_bid, 4)
 
-        if "Yes" in outcome_prices and "No" not in outcome_prices:
-            outcome_prices["No"] = round(1.0 - outcome_prices["Yes"], 4)
-        elif "No" in outcome_prices and "Yes" not in outcome_prices:
-            outcome_prices["Yes"] = round(1.0 - outcome_prices["No"], 4)
+        if yes_label in outcome_prices and no_label not in outcome_prices:
+            outcome_prices[no_label] = round(1.0 - outcome_prices[yes_label], 4)
+        elif no_label in outcome_prices and yes_label not in outcome_prices:
+            outcome_prices[yes_label] = round(1.0 - outcome_prices[no_label], 4)
 
-        outcomes = {"Yes": "yes", "No": "no"}
+        outcomes = {yes_label: "yes", no_label: "no"}
 
         end_date = None
         close_time = raw.get("close_time") or raw.get("expected_expiration_time")
