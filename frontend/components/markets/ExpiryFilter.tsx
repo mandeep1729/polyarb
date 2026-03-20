@@ -61,6 +61,8 @@ export default function ExpiryFilter({ value, onChange, showExpired, onShowExpir
     }
   };
 
+  const hasRange = value.min || value.max;
+
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>
       <Calendar className="h-3.5 w-3.5 shrink-0 text-gray-500" />
@@ -79,27 +81,34 @@ export default function ExpiryFilter({ value, onChange, showExpired, onShowExpir
         </button>
       ))}
       <span className="mx-1 text-gray-600">|</span>
-      <input
-        type="date"
-        value={value.min}
-        onChange={(e) => onChange({ ...value, min: e.target.value })}
-        className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-300 focus:border-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-      />
-      <span className="text-xs text-gray-500">to</span>
-      <input
-        type="date"
-        value={value.max}
-        onChange={(e) => onChange({ ...value, max: e.target.value })}
-        className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-300 focus:border-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-      />
-      {(value.min || value.max) && (
-        <button
-          onClick={() => onChange({ min: '', max: '' })}
-          className="rounded-md px-1.5 py-1 text-xs text-gray-500 hover:text-gray-300"
-        >
-          Clear
-        </button>
-      )}
+      <div className={cn(
+        'inline-flex items-center rounded-md border bg-gray-900',
+        hasRange ? 'border-emerald-700' : 'border-gray-700'
+      )}>
+        <input
+          type="date"
+          value={value.min}
+          max={value.max || undefined}
+          onChange={(e) => onChange({ ...value, min: e.target.value })}
+          className="w-[7.5rem] border-none bg-transparent px-2 py-1 text-xs text-gray-300 focus:outline-none"
+        />
+        <span className="text-xs text-gray-600">–</span>
+        <input
+          type="date"
+          value={value.max}
+          min={value.min || undefined}
+          onChange={(e) => onChange({ ...value, max: e.target.value })}
+          className="w-[7.5rem] border-none bg-transparent px-2 py-1 text-xs text-gray-300 focus:outline-none"
+        />
+        {hasRange && (
+          <button
+            onClick={() => onChange({ min: '', max: '' })}
+            className="px-1.5 text-xs text-gray-500 hover:text-gray-300"
+          >
+            ×
+          </button>
+        )}
+      </div>
       <span className="mx-1 text-gray-600">|</span>
       <label className="flex cursor-pointer items-center gap-1.5">
         <div
