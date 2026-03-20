@@ -1,7 +1,9 @@
 """Service for querying market groups and their analytics."""
+import json
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -154,21 +156,14 @@ class GroupService:
             for row in result.all()
         ]
 
-    # Extra noise words for tag cloud (beyond STOP_WORDS)
-    _TAG_NOISE = frozenset({
-        "market", "price", "yes", "no", "resolve", "any", "reach",
-        "end", "win", "next", "first", "over", "under", "more", "most",
-        "new", "each", "would", "could", "should", "may", "might",
-        "top", "down", "total", "pro", "per", "get", "set", "going",
-        "will", "been", "into", "about", "out", "all", "also",
-        "spread", "season", "winner", "round", "game", "match",
-        "year", "score", "points", "finish", "highest", "lowest",
-        "number", "day", "days", "week", "month", "time",
-        "january", "february", "march", "april", "june", "july",
-        "august", "september", "october", "november", "december",
-        "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep",
-        "oct", "nov", "dec",
-    })
+    _TAG_NOISE_PATH = (
+        Path(__file__).resolve().parent.parent.parent
+        / "config"
+        / "tag_noise.json"
+    )
+    _TAG_NOISE: frozenset[str] = frozenset(
+        json.loads(_TAG_NOISE_PATH.read_text())
+    )
 
     _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
 
