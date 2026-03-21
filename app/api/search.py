@@ -22,7 +22,7 @@ async def search_markets(
     end_date_min: datetime | None = Query(None, description="Markets expiring on or after"),
     end_date_max: datetime | None = Query(None, description="Markets expiring on or before"),
     exclude_q: str | None = Query(None, max_length=200, description="Exclude markets matching these terms"),
-    limit: int = Query(20, ge=1, le=100, description="Max results"),
+    limit: int = Query(20, ge=1, le=1000, description="Max results"),
     db: AsyncSession = Depends(get_db),
 ) -> list[MarketResponse]:
     if not q and not exclude_q:

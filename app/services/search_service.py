@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 import structlog
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, asc, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category
@@ -54,7 +54,7 @@ class SearchService:
         if filters:
             stmt = stmt.where(and_(*filters))
 
-        stmt = stmt.order_by(desc("rank"))
+        stmt = stmt.order_by(asc(UnifiedMarket.end_date).nulls_last(), desc("rank"))
 
         if platform:
             # Single platform — no balancing needed
@@ -201,8 +201,8 @@ class SearchService:
                 balanced.append(row)
                 seen_ids.add(row[0].id)
 
-        # Sort by rank descending
-        balanced.sort(key=lambda r: r[3], reverse=True)
+        # Sort by end_date ascending (nulls last)
+        balanced.sort(key=lambda r: (r[0].end_date is None, r[0].end_date))
         return balanced[:limit]
 
     @staticmethod
