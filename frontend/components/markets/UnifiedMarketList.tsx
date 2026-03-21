@@ -103,6 +103,7 @@ export default function UnifiedMarketList({
     end_date_min: endDateMin,
     end_date_max: endDateMax,
     exclude_q: excludeQuery || undefined,
+    limit: 100,
   });
 
   const isSearching = searchQuery.length >= 2 || (excludeQuery != null && excludeQuery.length > 0);

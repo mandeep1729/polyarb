@@ -18,10 +18,11 @@ def build_tsquery(query: str) -> str:
     groups = []
     for word in words:
         synonyms = all_synonyms.get(word, [])
-        # Flatten multi-word synonyms into individual tsquery terms
+        # Only add single-word synonyms; multi-word synonyms are too broad when split
         all_terms = [word]
         for syn in synonyms:
-            all_terms.extend(syn.split())
+            if " " not in syn:
+                all_terms.append(syn)
         # Deduplicate while preserving order
         seen = set()
         unique = []
@@ -52,7 +53,8 @@ def build_exclude_tsquery(query: str) -> str:
         synonyms = all_synonyms.get(word, [])
         all_terms = [word]
         for syn in synonyms:
-            all_terms.extend(syn.split())
+            if " " not in syn:
+                all_terms.append(syn)
         seen: set[str] = set()
         unique: list[str] = []
         for t in all_terms:
