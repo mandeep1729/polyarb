@@ -1,8 +1,9 @@
 """Admin dashboard stats endpoint — single endpoint returning all metrics."""
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,10 @@ from app.services.group_service import extract_word_counts
 from app.tasks.task_tracker import get_all_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# --- Cached tag data (recomputed at most every 5 minutes) ---
+_tag_cache: dict = {"tags": [], "platform_slugs": [], "ts": 0.0}
+_TAG_CACHE_TTL = 300  # seconds
 
 
 @router.get("/stats")
@@ -216,36 +221,9 @@ async def admin_stats(db: AsyncSession = Depends(get_db)) -> dict:
         "high_disagreement": high_disagreement,
     }
 
-    # --- Tags by platform ---
-    tag_rows = (await db.execute(
-        select(Platform.slug, UnifiedMarket.question)
-        .join(UnifiedMarket, UnifiedMarket.platform_id == Platform.id)
-        .where(UnifiedMarket.is_active.is_(True))
-    )).all()
-
-    platform_counters: dict[str, Counter[str]] = {}
-    all_questions: list[str] = []
-    for slug, question in tag_rows:
-        if question:
-            all_questions.append(question)
-            platform_counters.setdefault(slug, Counter())
-
-    total_counter = extract_word_counts(all_questions)
-
-    # Per-platform counts
-    for slug in platform_counters:
-        platform_qs = [q for s, q in tag_rows if s == slug and q]
-        platform_counters[slug] = extract_word_counts(platform_qs)
-
-    platform_slugs = sorted(platform_counters.keys())
-    tags = [
-        {
-            "term": term,
-            "total": count,
-            **{slug: platform_counters.get(slug, Counter()).get(term, 0) for slug in platform_slugs},
-        }
-        for term, count in total_counter.most_common(200)
-    ]
+    # --- Tags by platform (cached) ---
+    all_tags, platform_slugs = await _get_all_tags(db)
+    tags = all_tags[:200]
 
     return {
         "timestamp": now.isoformat(),
@@ -261,3 +239,56 @@ async def admin_stats(db: AsyncSession = Depends(get_db)) -> dict:
         "tags": tags,
         "platform_slugs": platform_slugs,
     }
+
+
+async def _get_all_tags(db: AsyncSession) -> tuple[list[dict], list[str]]:
+    """Return all tags with per-platform counts. Cached for 5 minutes."""
+    global _tag_cache
+    if time.monotonic() - _tag_cache["ts"] < _TAG_CACHE_TTL and _tag_cache["tags"]:
+        return _tag_cache["tags"], _tag_cache["platform_slugs"]
+
+    tag_rows = (await db.execute(
+        select(Platform.slug, UnifiedMarket.question)
+        .join(UnifiedMarket, UnifiedMarket.platform_id == Platform.id)
+        .where(UnifiedMarket.is_active.is_(True))
+    )).all()
+
+    platform_counters: dict[str, Counter[str]] = {}
+    all_questions: list[str] = []
+    for slug, question in tag_rows:
+        if question:
+            all_questions.append(question)
+            platform_counters.setdefault(slug, Counter())
+
+    total_counter = extract_word_counts(all_questions)
+
+    for slug in platform_counters:
+        platform_qs = [q for s, q in tag_rows if s == slug and q]
+        platform_counters[slug] = extract_word_counts(platform_qs)
+
+    platform_slugs = sorted(platform_counters.keys())
+    all_tags = [
+        {
+            "term": term,
+            "total": count,
+            **{slug: platform_counters.get(slug, Counter()).get(term, 0) for slug in platform_slugs},
+        }
+        for term, count in total_counter.most_common()
+    ]
+
+    _tag_cache["tags"] = all_tags
+    _tag_cache["platform_slugs"] = platform_slugs
+    _tag_cache["ts"] = time.monotonic()
+    return all_tags, platform_slugs
+
+
+@router.get("/tags/search")
+async def search_tags(
+    q: str = Query(..., min_length=3, max_length=100, description="Search term (min 3 chars)"),
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Search all tags by substring match. Returns matching tags with per-platform counts."""
+    all_tags, _ = await _get_all_tags(db)
+    query = q.lower()
+    return [t for t in all_tags if query in str(t["term"]).lower()][:limit]

@@ -280,3 +280,12 @@ export interface AdminStats {
 export async function getAdminStats(): Promise<AdminStats> {
   return fetcher<AdminStats>('/admin/stats');
 }
+
+export async function searchAdminTags(
+  q: string,
+  limit: number = 10
+): Promise<Record<string, string | number>[]> {
+  return fetcher<Record<string, string | number>[]>(
+    `/admin/tags/search${qs({ q, limit })}`
+  );
+}

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getAdminStats, type AdminStats } from '@/lib/api';
+import { getAdminStats, searchAdminTags, type AdminStats } from '@/lib/api';
 import { cn } from '@/lib/utils/format';
 import { Search, AlertCircle, X } from 'lucide-react';
 
@@ -241,11 +241,21 @@ function OverviewTab({ data }: { data: AdminStats }) {
 
 const DEFAULT_TAG_COUNT = 100;
 
+function useDebounce(value: string, delay: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
 function TagsTab({ data }: { data: AdminStats }) {
   const [search, setSearch] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [selectedTag, setSelectedTag] = useState<Record<string, string | number> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const debouncedSearch = useDebounce(search, 200);
 
   // Close suggestions on outside click
   useEffect(() => {
@@ -258,68 +268,73 @@ function TagsTab({ data }: { data: AdminStats }) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // Autocomplete suggestions: show when 3+ chars typed
-  const suggestions = useMemo(() => {
-    if (search.length < 3) return [];
-    const q = search.toLowerCase();
-    return data.tags
-      .filter((t) => String(t.term).toLowerCase().includes(q))
-      .slice(0, 10);
-  }, [data.tags, search]);
+  // Server-side autocomplete search (all tags, not just top 200)
+  const { data: suggestions } = useQuery({
+    queryKey: ['adminTagSearch', debouncedSearch],
+    queryFn: () => searchAdminTags(debouncedSearch, 10),
+    enabled: debouncedSearch.length >= 3,
+    staleTime: 30_000,
+  });
 
-  // Table data: if searching, show all matches; otherwise top 100
+  // Table: default top 100, or selected search result
   const tableData = useMemo(() => {
-    if (search) {
-      const q = search.toLowerCase();
-      return data.tags.filter((t) => String(t.term).toLowerCase().includes(q));
-    }
+    if (selectedTag) return [selectedTag];
     return data.tags.slice(0, DEFAULT_TAG_COUNT);
-  }, [data.tags, search]);
+  }, [data.tags, selectedTag]);
 
-  const selectSuggestion = (term: string) => {
-    setSearch(term);
+  const selectSuggestion = (tag: Record<string, string | number>) => {
+    setSelectedTag(tag);
+    setSearch(String(tag.term));
+    setShowSuggestions(false);
+  };
+
+  const clearSearch = () => {
+    setSearch('');
+    setSelectedTag(null);
     setShowSuggestions(false);
   };
 
   return (
     <div className="space-y-3">
-      {/* Search with autocomplete */}
+      {/* Search with server-side autocomplete */}
       <div ref={wrapperRef} className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
         <input
-          ref={inputRef}
           type="text"
-          placeholder="Search tags (3+ chars for suggestions)..."
+          placeholder="Search all tags (3+ chars)..."
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
+            setSelectedTag(null);
             setShowSuggestions(e.target.value.length >= 3);
           }}
-          onFocus={() => { if (search.length >= 3) setShowSuggestions(true); }}
+          onFocus={() => { if (search.length >= 3 && !selectedTag) setShowSuggestions(true); }}
           className="w-full rounded-lg border border-gray-800 bg-gray-900 py-2 pl-9 pr-8 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
         />
         {search && (
-          <button
-            onClick={() => { setSearch(''); setShowSuggestions(false); }}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-          >
+          <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
             <X className="h-3.5 w-3.5" />
           </button>
         )}
 
         {/* Autocomplete dropdown */}
-        {showSuggestions && suggestions.length > 0 && (
+        {showSuggestions && suggestions && suggestions.length > 0 && (
           <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-lg">
             {suggestions.map((s) => (
               <button
                 key={String(s.term)}
-                onClick={() => selectSuggestion(String(s.term))}
+                onClick={() => selectSuggestion(s)}
                 className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800"
               >
                 <span>{String(s.term)}</span>
                 <span className="text-xs text-gray-600">{Number(s.total).toLocaleString()}</span>
               </button>
             ))}
+          </div>
+        )}
+        {showSuggestions && debouncedSearch.length >= 3 && suggestions && suggestions.length === 0 && (
+          <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-500 shadow-lg">
+            No tags matching "{debouncedSearch}"
           </div>
         )}
       </div>
@@ -338,7 +353,7 @@ function TagsTab({ data }: { data: AdminStats }) {
           </thead>
           <tbody className="divide-y divide-gray-800">
             {tableData.map((tag) => (
-              <tr key={String(tag.term)} className="text-gray-300">
+              <tr key={String(tag.term)} className={cn('text-gray-300', selectedTag && 'bg-emerald-900/10')}>
                 <td className="px-3 py-2 font-medium">{String(tag.term)}</td>
                 <td className="px-3 py-2 text-right font-mono">{Number(tag.total).toLocaleString()}</td>
                 {data.platform_slugs.map((slug) => (
@@ -353,8 +368,8 @@ function TagsTab({ data }: { data: AdminStats }) {
       </div>
 
       <p className="text-xs text-gray-600">
-        {search
-          ? `${tableData.length} matches`
+        {selectedTag
+          ? 'Showing search result — clear to see top tags'
           : `Showing top ${Math.min(DEFAULT_TAG_COUNT, data.tags.length)} of ${data.tags.length} tags`}
       </p>
     </div>
