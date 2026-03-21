@@ -19,8 +19,15 @@ interface UnifiedMarketListProps {
   excludeExpired?: boolean;
 }
 
-/** Group markets by the date portion of end_date, sort groups chronologically, sort within groups by volume desc. */
-function groupByExpiry(markets: Market[]): { key: string; label: string; items: Market[] }[] {
+interface ExpiryGroup {
+  key: string;
+  label: string;
+  platforms: { slug: string; name: string; items: Market[] }[];
+  total: number;
+}
+
+/** Group markets by expiry date, then by platform within each date. */
+function groupByExpiry(markets: Market[]): ExpiryGroup[] {
   const map = new Map<string, Market[]>();
   for (const m of markets) {
     const key = m.end_date ? m.end_date.slice(0, 10) : 'no-expiry';
@@ -28,28 +35,46 @@ function groupByExpiry(markets: Market[]): { key: string; label: string; items: 
     if (list) list.push(m);
     else map.set(key, [m]);
   }
-  // Sort within each group by volume desc
-  for (const list of map.values()) {
-    list.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
-  }
+
   // Sort groups chronologically, no-expiry last
   const keys = [...map.keys()].sort((a, b) => {
     if (a === 'no-expiry') return 1;
     if (b === 'no-expiry') return -1;
     return a.localeCompare(b);
   });
-  return keys.map((key) => ({
-    key,
-    label: key === 'no-expiry'
-      ? 'No expiry'
-      : new Date(key + 'T00:00:00').toLocaleDateString('en-US', {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        }),
-    items: map.get(key)!,
-  }));
+
+  return keys.map((key) => {
+    const items = map.get(key)!;
+    // Split by platform, sorted by volume desc within each
+    const byPlatform = new Map<string, { name: string; items: Market[] }>();
+    for (const m of items) {
+      const entry = byPlatform.get(m.platform_slug);
+      if (entry) entry.items.push(m);
+      else byPlatform.set(m.platform_slug, { name: m.platform_name, items: [m] });
+    }
+    // Sort within each platform by volume desc
+    for (const entry of byPlatform.values()) {
+      entry.items.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
+    }
+    // Stable platform order: alphabetical by slug
+    const platforms = [...byPlatform.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([slug, { name, items: pItems }]) => ({ slug, name, items: pItems }));
+
+    return {
+      key,
+      label: key === 'no-expiry'
+        ? 'No expiry'
+        : new Date(key + 'T00:00:00').toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+      platforms,
+      total: items.length,
+    };
+  });
 }
 
 export default function UnifiedMarketList({
@@ -130,24 +155,34 @@ export default function UnifiedMarketList({
 
   return (
     <div className="space-y-6">
-      {groups.map(({ key, label, items }) => (
+      {groups.map(({ key, label, platforms, total }) => (
         <section key={key}>
           <div className="sticky top-0 z-10 mb-3 flex items-center gap-2 bg-gray-950/80 py-2 backdrop-blur-sm">
             <h3 className="text-sm font-semibold text-gray-300">{label}</h3>
             <span className="text-xs text-gray-600">
-              {items.length} {items.length === 1 ? 'market' : 'markets'}
+              {total} {total === 1 ? 'market' : 'markets'}
             </span>
           </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {items.map((market) => (
-              <BetCard
-                key={market.id}
-                market={market}
-                expanded={expandedId === market.id}
-                onToggle={() =>
-                  setExpandedId((prev) => (prev === market.id ? null : market.id))
-                }
-              />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {platforms.map(({ slug, name, items }) => (
+              <div key={slug}>
+                <div className="mb-2 flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-gray-400">{name}</span>
+                  <span className="text-xs text-gray-600">{items.length}</span>
+                </div>
+                <div className="space-y-3">
+                  {items.map((market) => (
+                    <BetCard
+                      key={market.id}
+                      market={market}
+                      expanded={expandedId === market.id}
+                      onToggle={() =>
+                        setExpandedId((prev) => (prev === market.id ? null : market.id))
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </section>
