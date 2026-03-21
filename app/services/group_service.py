@@ -36,7 +36,7 @@ SORT_COLUMNS = {
 }
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
-_TAG_NOISE: frozenset[str] = frozenset(json.loads((_CONFIG_DIR / "tag_noise.json").read_text()))
+_TAG_NOISE: frozenset[str] = frozenset(w.lower() for w in json.loads((_CONFIG_DIR / "tag_noise.json").read_text()))
 
 # Build verb set: base forms + inflected forms (3rd person, past, gerund)
 _VERB_ROOTS: list[str] = json.loads((_CONFIG_DIR / "tag_verbs.json").read_text())

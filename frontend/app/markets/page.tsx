@@ -13,6 +13,9 @@ import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
 import { X, Search } from 'lucide-react';
 
+// Convert date-only string to end-of-day for inclusive range
+const endOfDay = (date: string) => `${date}T23:59:59`;
+
 const PLATFORMS = [
   { slug: 'polymarket', label: 'Polymarket' },
   { slug: 'kalshi', label: 'Kalshi' },
@@ -136,7 +139,7 @@ function MarketsContent() {
     category: resolvedCategory,
     exclude_expired: !showExpired,
     end_date_min: dateRange.min || undefined,
-    end_date_max: dateRange.max || undefined,
+    end_date_max: dateRange.max ? endOfDay(dateRange.max) : undefined,
     exclude_q: excludeQuery || undefined,
     limit: 100,
   }), [combinedQuery, resolvedCategory, showExpired, dateRange, excludeQuery]);
@@ -348,7 +351,7 @@ function MarketsContent() {
               category={resolvedCategory}
               sort={resolvedSort}
               endDateMin={dateRange.min || undefined}
-              endDateMax={dateRange.max || undefined}
+              endDateMax={dateRange.max ? endOfDay(dateRange.max) : undefined}
               excludeExpired={!showExpired}
             />
           ))}
