@@ -12,6 +12,8 @@ import TagCloud from '@/components/groups/TagCloud';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
 import { useGroupTags } from '@/lib/queries/useGroupTags';
+import { X } from 'lucide-react';
+import { cn } from '@/lib/utils/format';
 
 const PLATFORMS = [
   { slug: 'polymarket', label: 'Polymarket' },
@@ -21,7 +23,10 @@ const PLATFORMS = [
 function MarketsContent() {
   const searchParams = useSearchParams();
   const initialQ = searchParams.get('q') ?? '';
-  const [searchQuery, setSearchQuery] = useState(initialQ);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchTerms, setSearchTerms] = useState<string[]>(
+    initialQ ? [initialQ] : []
+  );
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [category] = useQueryState('category', { defaultValue: 'All' });
   const [sort] = useQueryState('sort', { defaultValue: 'volume_24h' });
@@ -30,6 +35,19 @@ function MarketsContent() {
 
   const resolvedCategory = category === 'All' ? undefined : category ?? undefined;
   const resolvedSort = sort ?? 'volume_24h';
+
+  const addSearchTerm = useCallback((term: string) => {
+    const trimmed = term.trim();
+    if (trimmed.length < 2) return;
+    setSearchTerms((prev) =>
+      prev.includes(trimmed) ? prev : [...prev, trimmed]
+    );
+    setSearchInput('');
+  }, []);
+
+  const removeSearchTerm = useCallback((term: string) => {
+    setSearchTerms((prev) => prev.filter((t) => t !== term));
+  }, []);
 
   const toggleTag = useCallback((term: string) => {
     setSelectedTags((prev) => {
@@ -40,12 +58,11 @@ function MarketsContent() {
     });
   }, []);
 
-  // Combine text search + selected tags into one query
+  // Combine search terms + selected tags into one query
   const combinedQuery = useMemo(() => {
-    const parts = [...selectedTags];
-    if (searchQuery.length >= 2) parts.push(searchQuery);
+    const parts = [...searchTerms, ...selectedTags];
     return parts.join(' ');
-  }, [searchQuery, selectedTags]);
+  }, [searchTerms, selectedTags]);
 
   const { data: categoryCounts } = useMarketCategoryCounts();
   const { data: tags } = useGroupTags(50);
@@ -72,12 +89,41 @@ function MarketsContent() {
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <SearchInput
-            value={searchQuery}
-            onChange={setSearchQuery}
+            value={searchInput}
+            onChange={setSearchInput}
+            onSubmit={addSearchTerm}
+            placeholder="Type and press Enter to add filter..."
             className="sm:max-w-sm"
           />
           <SortSelect />
         </div>
+
+        {/* Active search selections */}
+        {searchTerms.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-gray-500">Filters:</span>
+            {searchTerms.map((term) => (
+              <span
+                key={term}
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-700 bg-emerald-900/30 px-2.5 py-0.5 text-xs font-medium text-emerald-400"
+              >
+                {term}
+                <button
+                  onClick={() => removeSearchTerm(term)}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-emerald-800/50"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={() => setSearchTerms([])}
+              className="text-xs text-gray-500 hover:text-gray-300"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
 
         <CategoryFilter counts={countsRecord} />
 
