@@ -20,7 +20,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 # --- Cached tag data (recomputed at most every 5 minutes) ---
 _tag_cache: dict = {"tags": [], "platform_slugs": [], "ts": 0.0}
-_TAG_CACHE_TTL = 300  # seconds
+_TAG_CACHE_TTL = 3600  # seconds
 
 
 @router.get("/stats")
