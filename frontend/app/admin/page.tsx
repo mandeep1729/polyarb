@@ -239,7 +239,7 @@ function OverviewTab({ data }: { data: AdminStats }) {
 
 // --- Tags Tab ---
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;
 
 function useDebounce(value: string, delay: number): string {
   const [debounced, setDebounced] = useState(value);
@@ -433,9 +433,21 @@ function TagsTab({ data }: { data: AdminStats }) {
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
-            <span className="px-2 text-xs text-gray-400">
-              Page {page + 1} of {totalPages}
-            </span>
+            <span className="px-1 text-xs text-gray-500">Page</span>
+            <input
+              type="number"
+              min={1}
+              max={totalPages}
+              value={page + 1}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val >= 1 && val <= totalPages) {
+                  setPage(val - 1);
+                }
+              }}
+              className="w-12 rounded border border-gray-700 bg-gray-900 px-1.5 py-0.5 text-center text-xs text-gray-300 focus:border-emerald-600 focus:outline-none"
+            />
+            <span className="px-1 text-xs text-gray-500">of {totalPages}</span>
             <button
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}

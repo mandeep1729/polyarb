@@ -221,9 +221,8 @@ async def admin_stats(db: AsyncSession = Depends(get_db)) -> dict:
         "high_disagreement": high_disagreement,
     }
 
-    # --- Tags by platform (cached) ---
+    # --- Tags by platform (cached, all tags) ---
     all_tags, platform_slugs = await _get_all_tags(db)
-    tags = all_tags[:200]
 
     return {
         "timestamp": now.isoformat(),
@@ -236,7 +235,7 @@ async def admin_stats(db: AsyncSession = Depends(get_db)) -> dict:
         "task_status": task_status,
         "arbitrage": arbitrage,
         "grouping": grouping,
-        "tags": tags,
+        "tags": all_tags,
         "platform_slugs": platform_slugs,
     }
 
