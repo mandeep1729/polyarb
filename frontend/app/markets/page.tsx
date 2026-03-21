@@ -1,7 +1,6 @@
 'use client';
 
 import { Suspense, useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useQueryState } from 'nuqs';
 import { useQuery } from '@tanstack/react-query';
 import { searchAdminTags, getMarketTags } from '@/lib/api';
@@ -27,19 +26,63 @@ function useDebounce(value: string, delay: number): string {
   return debounced;
 }
 
+// Parse comma-separated query param into string array (empty string → empty array)
+const parseList = (v: string): string[] => v ? v.split(',').filter(Boolean) : [];
+const serializeList = (v: string[]): string => v.join(',') || '';
+
 function MarketsContent() {
-  const searchParams = useSearchParams();
-  const initialQ = searchParams.get('q') ?? '';
   const [searchInput, setSearchInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [searchTerms, setSearchTerms] = useState<string[]>(
-    initialQ ? [initialQ] : []
-  );
-  const [includedTags, setIncludedTags] = useState<Set<string>>(new Set());
-  const [excludedTags, setExcludedTags] = useState<Set<string>>(new Set());
+
+  // All filter state persisted in URL query params
+  const [qParam, setQParam] = useQueryState('q', { defaultValue: '' });
+  const [tagsParam, setTagsParam] = useQueryState('tags', { defaultValue: '' });
+  const [xtagsParam, setXtagsParam] = useQueryState('xtags', { defaultValue: '' });
   const [category, setCategory] = useQueryState('category', { defaultValue: '' });
-  const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
-  const [showExpired, setShowExpired] = useState(false);
+  const [dmin, setDmin] = useQueryState('dmin', { defaultValue: '' });
+  const [dmax, setDmax] = useQueryState('dmax', { defaultValue: '' });
+  const [expiredParam, setExpiredParam] = useQueryState('expired', { defaultValue: '' });
+
+  // Derived state from URL params
+  const searchTerms = useMemo(() => parseList(qParam), [qParam]);
+  const includedTags = useMemo(() => new Set(parseList(tagsParam)), [tagsParam]);
+  const excludedTags = useMemo(() => new Set(parseList(xtagsParam)), [xtagsParam]);
+  const dateRange: DateRange = useMemo(() => ({ min: dmin, max: dmax }), [dmin, dmax]);
+  const showExpired = expiredParam === '1';
+
+  // Setters that update URL params
+  const setSearchTerms = useCallback((updater: string[] | ((prev: string[]) => string[])) => {
+    setQParam((prev) => {
+      const current = parseList(prev);
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      return serializeList(next) || null;
+    });
+  }, [setQParam]);
+
+  const setIncludedTags = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    setTagsParam((prev) => {
+      const current = new Set(parseList(prev));
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      return serializeList([...next]) || null;
+    });
+  }, [setTagsParam]);
+
+  const setExcludedTags = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    setXtagsParam((prev) => {
+      const current = new Set(parseList(prev));
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      return serializeList([...next]) || null;
+    });
+  }, [setXtagsParam]);
+
+  const setDateRange = useCallback((range: DateRange) => {
+    setDmin(range.min || null);
+    setDmax(range.max || null);
+  }, [setDmin, setDmax]);
+
+  const setShowExpired = useCallback((v: boolean) => {
+    setExpiredParam(v ? '1' : null);
+  }, [setExpiredParam]);
   const [pairMode, setPairMode] = useState(false);
   const [pairSelections, setPairSelections] = useState<Market[]>([]);
 
@@ -183,10 +226,10 @@ function MarketsContent() {
   const hasFilters = searchTerms.length > 0 || includedTags.size > 0 || excludedTags.size > 0;
 
   const clearAll = useCallback(() => {
-    setSearchTerms([]);
-    setIncludedTags(new Set());
-    setExcludedTags(new Set());
-  }, []);
+    setQParam(null);
+    setTagsParam(null);
+    setXtagsParam(null);
+  }, [setQParam, setTagsParam, setXtagsParam]);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
