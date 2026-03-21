@@ -21,6 +21,81 @@ CATEGORY_MAP: dict[str, str] = {
 # DB category value → frontend display name
 DISPLAY_NAMES: dict[str, str] = {v: k.title() for k, v in CATEGORY_MAP.items()}
 
+# Broader tag aliases → canonical DB category (used by resolve_tag)
+_TAG_ALIASES: dict[str, str] = {
+    # economics
+    "economy": "economics",
+    "equities": "economics",
+    "commodities": "economics",
+    "derivatives": "economics",
+    "earnings": "economics",
+    "macro indicators": "economics",
+    "global rates": "economics",
+    "up or down": "economics",
+    "indicies": "economics",
+    "interest rate": "economics",
+    "interest rates": "economics",
+    "fed rates": "economics",
+    "global gdp": "economics",
+    "housing": "economics",
+    "business": "economics",
+    "s&p 500": "economics",
+    "volatility": "economics",
+    "foreign exchange": "economics",
+    # crypto
+    "crypto prices": "crypto",
+    "stablecoins": "crypto",
+    "bitcoin": "crypto",
+    "ethereum": "crypto",
+    "solana": "crypto",
+    "xrp": "crypto",
+    "dogecoin": "crypto",
+    "bnb": "crypto",
+    # sports
+    "nba": "sports",
+    "nfl": "sports",
+    "nhl": "sports",
+    "mlb": "sports",
+    "mls": "sports",
+    "ufc": "sports",
+    "soccer": "sports",
+    "tennis": "sports",
+    "hockey": "sports",
+    "basketball": "sports",
+    "baseball": "sports",
+    "cricket": "sports",
+    "formula 1": "sports",
+    "premier league": "sports",
+    "la liga": "sports",
+    "serie a": "sports",
+    "serie b": "sports",
+    "ligue 1": "sports",
+    "champions league": "sports",
+    "esports": "sports",
+    "efl cup": "sports",
+    "wta": "sports",
+    # politics
+    "elections": "politics",
+    "world elections": "politics",
+    "global elections": "politics",
+    "geopolitics": "politics",
+    "congress": "politics",
+    "senate": "politics",
+    # entertainment
+    "culture": "entertainment",
+    "movies": "entertainment",
+    "music": "entertainment",
+    "games": "entertainment",
+    "netflix": "entertainment",
+    # climate
+    "weather & science": "climate",
+    "precipitation": "climate",
+    "daily temperature": "climate",
+    # technology
+    "ai": "technology",
+    "space": "technology",
+}
+
 # All valid DB category values
 VALID_DB_CATEGORIES = set(CATEGORY_MAP.values())
 
@@ -48,6 +123,8 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "recession", "stock", "s&p", "nasdaq", "dow", "treasury", "tariff",
         "trade war", "oil price", "gas price", "housing", "jobs report",
         "federal reserve", "fomc", "rate cut", "rate hike", "ipo",
+        "economy", "finance", "equities", "commodities", "derivatives",
+        "earnings", "nonfarm payroll", "crude oil",
     ],
     "technology": [
         "ai", "tech", "apple", "google", "microsoft", "spacex", "openai",
@@ -75,6 +152,22 @@ def resolve_category(frontend_value: str | None) -> str | None:
     if not frontend_value:
         return None
     return CATEGORY_MAP.get(frontend_value.lower())
+
+
+def resolve_tag(tag_label: str) -> str | None:
+    """Map a raw platform tag to a canonical DB category. Case-insensitive.
+
+    Checks CATEGORY_MAP first (handles "Finance" → "economics"), then
+    _TAG_ALIASES for broader tag synonyms (handles "Economy" → "economics").
+    Returns None if the tag doesn't map to any known category.
+    """
+    if not tag_label:
+        return None
+    key = tag_label.lower().strip()
+    # Already a canonical DB category?
+    if key in VALID_DB_CATEGORIES:
+        return key
+    return CATEGORY_MAP.get(key) or _TAG_ALIASES.get(key)
 
 
 # Pre-compile regex patterns for each category (word-boundary matching)

@@ -93,7 +93,7 @@ class TestNormalizeEventMetadata:
         assert result["deep_link_url"] == "https://polymarket.com/event/x-event"
         assert result["event_ticker"] == "x-event"
 
-    def test_event_tags_used_for_category(self):
+    def test_event_tags_resolved_to_canonical(self):
         raw = {
             "condition_id": "cond2",
             "question": "Something random",
@@ -103,9 +103,9 @@ class TestNormalizeEventMetadata:
             "clobTokenIds": '["t1","t2"]',
         }
         result = self.connector.normalize(raw)
-        assert result["category"] == "Politics"
+        assert result["category"] == "politics"
 
-    def test_event_tags_string_labels(self):
+    def test_event_tags_string_labels_resolved(self):
         raw = {
             "condition_id": "cond3",
             "question": "Something random",
@@ -115,7 +115,7 @@ class TestNormalizeEventMetadata:
             "clobTokenIds": '["t1","t2"]',
         }
         result = self.connector.normalize(raw)
-        assert result["category"] == "Sports"
+        assert result["category"] == "sports"
 
     def test_event_image_used(self):
         raw = {
@@ -199,3 +199,63 @@ class TestNormalizeEventMetadata:
         }
         result = self.connector.normalize(raw)
         assert result["category"] == "explicit_cat"
+
+    def test_finance_tag_resolves_to_economics(self):
+        raw = {
+            "condition_id": "cond10",
+            "question": "Will something happen?",
+            "_event_tags": [{"label": "Finance"}],
+            "outcomes": '["Yes","No"]',
+            "outcomePrices": '["0.5","0.5"]',
+            "clobTokenIds": '["t1","t2"]',
+        }
+        result = self.connector.normalize(raw)
+        assert result["category"] == "economics"
+
+    def test_economy_tag_resolves_to_economics(self):
+        raw = {
+            "condition_id": "cond11",
+            "question": "GDP growth?",
+            "_event_tags": [{"label": "Economy"}],
+            "outcomes": '["Yes","No"]',
+            "outcomePrices": '["0.5","0.5"]',
+            "clobTokenIds": '["t1","t2"]',
+        }
+        result = self.connector.normalize(raw)
+        assert result["category"] == "economics"
+
+    def test_equities_tag_resolves_to_economics(self):
+        raw = {
+            "condition_id": "cond12",
+            "question": "Stock market?",
+            "_event_tags": ["Equities"],
+            "outcomes": '["Yes","No"]',
+            "outcomePrices": '["0.5","0.5"]',
+            "clobTokenIds": '["t1","t2"]',
+        }
+        result = self.connector.normalize(raw)
+        assert result["category"] == "economics"
+
+    def test_up_or_down_tag_resolves_to_economics(self):
+        raw = {
+            "condition_id": "cond13",
+            "question": "Will NVDA go up?",
+            "_event_tags": [{"label": "Up or Down"}],
+            "outcomes": '["Yes","No"]',
+            "outcomePrices": '["0.5","0.5"]',
+            "clobTokenIds": '["t1","t2"]',
+        }
+        result = self.connector.normalize(raw)
+        assert result["category"] == "economics"
+
+    def test_unknown_tag_preserved_as_is(self):
+        raw = {
+            "condition_id": "cond14",
+            "question": "Random stuff",
+            "_event_tags": [{"label": "SomeObscureTag"}],
+            "outcomes": '["Yes","No"]',
+            "outcomePrices": '["0.5","0.5"]',
+            "clobTokenIds": '["t1","t2"]',
+        }
+        result = self.connector.normalize(raw)
+        assert result["category"] == "SomeObscureTag"

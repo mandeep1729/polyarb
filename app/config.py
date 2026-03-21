@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     BACKFILL_TOP_N_MARKETS: int = 1000
     SQL_ECHO: bool = True
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

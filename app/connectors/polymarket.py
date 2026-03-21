@@ -8,7 +8,7 @@ from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import BookParams
 
 from app.config import settings
-from app.categories import infer_category
+from app.categories import infer_category, resolve_tag
 from app.connectors.base import BaseConnector
 
 logger = structlog.get_logger()
@@ -305,7 +305,9 @@ class PolymarketConnector(BaseConnector):
         if not category:
             tags = raw.get("_event_tags") or raw.get("tags", [])
             if tags and isinstance(tags, list):
-                category = tags[0].get("label") if isinstance(tags[0], dict) else str(tags[0])
+                tag_label = tags[0].get("label") if isinstance(tags[0], dict) else str(tags[0])
+                # Resolve to canonical DB category; fall back to raw tag
+                category = resolve_tag(tag_label) or tag_label
         if not category:
             category = infer_category(
                 question=raw.get("question", ""),
