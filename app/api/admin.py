@@ -273,6 +273,7 @@ async def _get_all_tags(db: AsyncSession) -> tuple[list[dict], list[str]]:
             **{slug: platform_counters.get(slug, Counter()).get(term, 0) for slug in platform_slugs},
         }
         for term, count in total_counter.most_common()
+        if count > 10
     ]
 
     _tag_cache["tags"] = all_tags
