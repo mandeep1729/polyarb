@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 import structlog
 from sqlalchemy import select
@@ -114,9 +114,12 @@ class LiveSearchService:
             end_date = normalized.get("end_date")
             if exclude_expired and end_date and end_date < datetime.now(end_date.tzinfo):
                 continue
-            if end_date_min and (not end_date or end_date < end_date_min):
+            # Ensure aware datetimes for comparison (date-only inputs parse as naive)
+            _min = end_date_min.replace(tzinfo=timezone.utc) if end_date_min and end_date_min.tzinfo is None else end_date_min
+            _max = end_date_max.replace(tzinfo=timezone.utc) if end_date_max and end_date_max.tzinfo is None else end_date_max
+            if _min and (not end_date or end_date < _min):
                 continue
-            if end_date_max and (not end_date or end_date > end_date_max):
+            if _max and (not end_date or end_date > _max):
                 continue
             seen.add(key)
             new_markets.append((normalized, pid))
