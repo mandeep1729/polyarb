@@ -271,7 +271,9 @@ class PolymarketConnector(BaseConnector):
 
         condition_id = raw.get("condition_id") or raw.get("conditionId") or ""
         slug = raw.get("slug", "")
-        deep_link = f"https://polymarket.com/event/{slug}" if slug else None
+        events = raw.get("events", [])
+        event_slug = events[0].get("slug") if events else slug
+        deep_link = f"https://polymarket.com/event/{event_slug}" if event_slug else None
 
         category = raw.get("category")
         if not category:
@@ -299,5 +301,5 @@ class PolymarketConnector(BaseConnector):
             "status": "active" if raw.get("active") else "closed",
             "deep_link_url": deep_link,
             "image_url": raw.get("image"),
-            "event_ticker": slug or None,
+            "event_ticker": event_slug or None,
         }
