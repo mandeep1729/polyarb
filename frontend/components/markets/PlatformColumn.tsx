@@ -34,6 +34,7 @@ interface PlatformColumnProps {
   slug: string;
   label: string;
   searchQuery: string;
+  excludeQuery?: string;
   category?: string;
   sort: string;
   endDateMin?: string;
@@ -45,6 +46,7 @@ export default function PlatformColumn({
   slug,
   label,
   searchQuery,
+  excludeQuery,
   category,
   sort,
   endDateMin,
@@ -71,9 +73,10 @@ export default function PlatformColumn({
     exclude_expired: excludeExpired,
     end_date_min: endDateMin,
     end_date_max: endDateMax,
+    exclude_q: excludeQuery || undefined,
   });
 
-  const isSearching = searchQuery.length >= 2;
+  const isSearching = searchQuery.length >= 2 || (excludeQuery != null && excludeQuery.length > 0);
   const isLoading = isSearching ? searchResult.isLoading : marketsQuery.isLoading;
   const markets: Market[] = isSearching
     ? searchResult.data ?? []

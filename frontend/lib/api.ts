@@ -77,6 +77,7 @@ export interface SearchFilters {
   exclude_expired?: boolean;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_q?: string;
   limit?: number;
 }
 
@@ -123,6 +124,7 @@ export interface MarketTagFilters {
   exclude_expired?: boolean;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_q?: string;
   limit?: number;
 }
 
@@ -139,7 +141,7 @@ export async function searchMarkets(
   filters: SearchFilters = {}
 ): Promise<Market[]> {
   return fetcher<Market[]>(
-    `/search${qs({ q: query, ...filters })}`
+    `/search${qs({ q: query || undefined, ...filters })}`
   );
 }
 

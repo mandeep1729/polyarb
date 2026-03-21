@@ -5,11 +5,10 @@ import { useSearchParams } from 'next/navigation';
 import { useQueryState } from 'nuqs';
 import { useQuery } from '@tanstack/react-query';
 import { searchAdminTags, getMarketTags } from '@/lib/api';
-import CategoryFilter from '@/components/markets/CategoryFilter';
 import ExpiryFilter, { type DateRange } from '@/components/markets/ExpiryFilter';
 import SortSelect from '@/components/markets/SortSelect';
 import PlatformColumn from '@/components/markets/PlatformColumn';
-import TagCloud from '@/components/groups/TagCloud';
+import TagBar from '@/components/groups/TagCloud';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
 import { X, Search } from 'lucide-react';
@@ -36,8 +35,9 @@ function MarketsContent() {
   const [searchTerms, setSearchTerms] = useState<string[]>(
     initialQ ? [initialQ] : []
   );
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
-  const [category] = useQueryState('category', { defaultValue: 'All' });
+  const [includedTags, setIncludedTags] = useState<Set<string>>(new Set());
+  const [excludedTags, setExcludedTags] = useState<Set<string>>(new Set());
+  const [category, setCategory] = useQueryState('category', { defaultValue: '' });
   const [sort] = useQueryState('sort', { defaultValue: 'volume_24h' });
   const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
   const [showExpired, setShowExpired] = useState(false);
@@ -45,7 +45,7 @@ function MarketsContent() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debouncedInput = useDebounce(searchInput, 200);
 
-  const resolvedCategory = category === 'All' ? undefined : category ?? undefined;
+  const resolvedCategory = category || undefined;
   const resolvedSort = sort ?? 'volume_24h';
 
   // Close suggestions on outside click
@@ -81,8 +81,17 @@ function MarketsContent() {
     setSearchTerms((prev) => prev.filter((t) => t !== term));
   }, []);
 
-  const toggleTag = useCallback((term: string) => {
-    setSelectedTags((prev) => {
+  // Tag include toggle: neutral→included, included→neutral, excluded→included
+  const toggleTagInclude = useCallback((term: string) => {
+    setExcludedTags((prev) => {
+      if (prev.has(term)) {
+        const next = new Set(prev);
+        next.delete(term);
+        return next;
+      }
+      return prev;
+    });
+    setIncludedTags((prev) => {
       const next = new Set(prev);
       if (next.has(term)) next.delete(term);
       else next.add(term);
@@ -90,11 +99,34 @@ function MarketsContent() {
     });
   }, []);
 
-  // Combine search terms + selected tags into one query
+  // Tag exclude toggle: neutral→excluded, excluded→neutral, included→excluded
+  const toggleTagExclude = useCallback((term: string) => {
+    setIncludedTags((prev) => {
+      if (prev.has(term)) {
+        const next = new Set(prev);
+        next.delete(term);
+        return next;
+      }
+      return prev;
+    });
+    setExcludedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(term)) next.delete(term);
+      else next.add(term);
+      return next;
+    });
+  }, []);
+
+  // Combine search terms + included tags into one query
   const combinedQuery = useMemo(() => {
-    const parts = [...searchTerms, ...selectedTags];
+    const parts = [...searchTerms, ...includedTags];
     return parts.join(' ');
-  }, [searchTerms, selectedTags]);
+  }, [searchTerms, includedTags]);
+
+  // Excluded tags as query
+  const excludeQuery = useMemo(() => {
+    return [...excludedTags].join(' ');
+  }, [excludedTags]);
 
   const { data: categoryCounts } = useMarketCategoryCounts();
 
@@ -105,8 +137,9 @@ function MarketsContent() {
     exclude_expired: !showExpired,
     end_date_min: dateRange.min || undefined,
     end_date_max: dateRange.max || undefined,
+    exclude_q: excludeQuery || undefined,
     limit: 100,
-  }), [combinedQuery, resolvedCategory, showExpired, dateRange]);
+  }), [combinedQuery, resolvedCategory, showExpired, dateRange, excludeQuery]);
 
   const { data: tags } = useQuery({
     queryKey: ['marketTags', tagFilters],
@@ -123,6 +156,18 @@ function MarketsContent() {
     return rec;
   }, [categoryCounts]);
 
+  const handleCategoryClick = useCallback((name: string | null) => {
+    setCategory(name ?? null);
+  }, [setCategory]);
+
+  const hasFilters = searchTerms.length > 0 || includedTags.size > 0 || excludedTags.size > 0;
+
+  const clearAll = useCallback(() => {
+    setSearchTerms([]);
+    setIncludedTags(new Set());
+    setExcludedTags(new Set());
+  }, []);
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* Top controls - fixed height */}
@@ -134,6 +179,7 @@ function MarketsContent() {
           </p>
         </div>
 
+        {/* Row 2: Search + Show expired toggle + Sort */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           {/* Search with autocomplete */}
           <div ref={wrapperRef} className="relative sm:max-w-sm sm:flex-1">
@@ -171,7 +217,7 @@ function MarketsContent() {
               <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-lg">
                 {suggestions.map((s) => {
                   const term = String(s.term);
-                  const alreadyAdded = searchTerms.includes(term) || selectedTags.has(term);
+                  const alreadyAdded = searchTerms.includes(term) || includedTags.has(term);
                   return (
                     <button
                       key={term}
@@ -194,16 +240,37 @@ function MarketsContent() {
               </div>
             )}
           </div>
-          <SortSelect />
+
+          {/* Right side: show expired toggle + sort */}
+          <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <div
+                role="switch"
+                aria-checked={showExpired}
+                onClick={() => setShowExpired(!showExpired)}
+                className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                  showExpired ? 'bg-emerald-600' : 'bg-gray-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                    showExpired ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </div>
+              <span className="text-xs text-gray-400">Show expired</span>
+            </label>
+            <SortSelect />
+          </div>
         </div>
 
-        {/* Active search selections */}
-        {searchTerms.length > 0 && (
+        {/* Row 3: Active filter chips */}
+        {hasFilters && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs text-gray-500">Filters:</span>
             {searchTerms.map((term) => (
               <span
-                key={term}
+                key={`s-${term}`}
                 className="inline-flex items-center gap-1 rounded-full border border-emerald-700 bg-emerald-900/30 px-2.5 py-0.5 text-xs font-medium text-emerald-400"
               >
                 {term}
@@ -215,8 +282,36 @@ function MarketsContent() {
                 </button>
               </span>
             ))}
+            {[...includedTags].map((term) => (
+              <span
+                key={`i-${term}`}
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-700 bg-emerald-900/30 px-2.5 py-0.5 text-xs font-medium text-emerald-400"
+              >
+                {term}
+                <button
+                  onClick={() => toggleTagInclude(term)}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-emerald-800/50"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {[...excludedTags].map((term) => (
+              <span
+                key={`x-${term}`}
+                className="inline-flex items-center gap-1 rounded-full border border-red-700 bg-red-900/30 px-2.5 py-0.5 text-xs font-medium text-red-400 line-through"
+              >
+                {term}
+                <button
+                  onClick={() => toggleTagExclude(term)}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-red-800/50 no-underline"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
             <button
-              onClick={() => setSearchTerms([])}
+              onClick={clearAll}
               className="text-xs text-gray-500 hover:text-gray-300"
             >
               Clear all
@@ -224,17 +319,20 @@ function MarketsContent() {
           </div>
         )}
 
-        <CategoryFilter counts={countsRecord} />
+        {/* Row 4: Unified TagBar (categories + tags) */}
+        <TagBar
+          categoryCounts={countsRecord}
+          activeCategory={resolvedCategory ?? null}
+          onCategoryClick={handleCategoryClick}
+          tags={tags ?? []}
+          includedTags={includedTags}
+          excludedTags={excludedTags}
+          onTagInclude={toggleTagInclude}
+          onTagExclude={toggleTagExclude}
+        />
 
-        {tags && tags.length > 0 && (
-          <TagCloud
-            tags={tags}
-            activeTags={selectedTags}
-            onTagClick={toggleTag}
-          />
-        )}
-
-        <ExpiryFilter value={dateRange} onChange={setDateRange} showExpired={showExpired} onShowExpiredChange={setShowExpired} />
+        {/* Row 5: Expiry filter (no show expired toggle — moved to row 2) */}
+        <ExpiryFilter value={dateRange} onChange={setDateRange} />
       </div>
 
       {/* Split columns - fill remaining height */}
@@ -246,6 +344,7 @@ function MarketsContent() {
               slug={p.slug}
               label={p.label}
               searchQuery={combinedQuery}
+              excludeQuery={excludeQuery}
               category={resolvedCategory}
               sort={resolvedSort}
               endDateMin={dateRange.min || undefined}

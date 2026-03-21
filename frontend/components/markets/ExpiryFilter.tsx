@@ -35,8 +35,8 @@ function fmt(d: Date): string {
 interface ExpiryFilterProps {
   value: DateRange;
   onChange: (value: DateRange) => void;
-  showExpired: boolean;
-  onShowExpiredChange: (value: boolean) => void;
+  showExpired?: boolean;
+  onShowExpiredChange?: (value: boolean) => void;
   className?: string;
 }
 
@@ -109,26 +109,30 @@ export default function ExpiryFilter({ value, onChange, showExpired, onShowExpir
           </button>
         )}
       </div>
-      <span className="mx-1 text-gray-600">|</span>
-      <label className="flex cursor-pointer items-center gap-1.5">
-        <div
-          role="switch"
-          aria-checked={showExpired}
-          onClick={() => onShowExpiredChange(!showExpired)}
-          className={cn(
-            'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors',
-            showExpired ? 'bg-emerald-600' : 'bg-gray-700'
-          )}
-        >
-          <span
-            className={cn(
-              'inline-block h-3 w-3 rounded-full bg-white transition-transform',
-              showExpired ? 'translate-x-3.5' : 'translate-x-0.5'
-            )}
-          />
-        </div>
-        <span className="text-xs text-gray-400">Show expired</span>
-      </label>
+      {onShowExpiredChange != null && (
+        <>
+          <span className="mx-1 text-gray-600">|</span>
+          <label className="flex cursor-pointer items-center gap-1.5">
+            <div
+              role="switch"
+              aria-checked={showExpired}
+              onClick={() => onShowExpiredChange(!showExpired)}
+              className={cn(
+                'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors',
+                showExpired ? 'bg-emerald-600' : 'bg-gray-700'
+              )}
+            >
+              <span
+                className={cn(
+                  'inline-block h-3 w-3 rounded-full bg-white transition-transform',
+                  showExpired ? 'translate-x-3.5' : 'translate-x-0.5'
+                )}
+              />
+            </div>
+            <span className="text-xs text-gray-400">Show expired</span>
+          </label>
+        </>
+      )}
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { useMarkets } from '@/lib/queries/useMarkets';
 import { useArbitrage } from '@/lib/queries/useArbitrage';
 import StatsBar from '@/components/dashboard/StatsBar';
 import GroupCard from '@/components/groups/GroupCard';
-import TagCloud from '@/components/groups/TagCloud';
+import { TagCloud } from '@/components/groups/TagCloud';
 import { GroupCardGridSkeleton } from '@/components/groups/GroupCardSkeleton';
 import CategoryFilter from '@/components/markets/CategoryFilter';
 import ExpiryFilter, { type DateRange } from '@/components/markets/ExpiryFilter';

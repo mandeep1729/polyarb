@@ -32,14 +32,21 @@ class LiveSearchService:
         exclude_expired: bool = True,
         end_date_min: "datetime | None" = None,
         end_date_max: "datetime | None" = None,
+        exclude_q: str | None = None,
         limit: int = 20,
     ) -> list[MarketResponse]:
         # Fire local + upstream searches in parallel
         local_task = self._search_service.search(
             query=query, category=category, platform=platform,
             exclude_expired=exclude_expired, end_date_min=end_date_min,
-            end_date_max=end_date_max, limit=limit,
+            end_date_max=end_date_max, exclude_q=exclude_q, limit=limit,
         )
+
+        # Skip upstream searches when there's no positive query (exclusion-only)
+        if not query:
+            local_results = await local_task
+            return local_results[:limit]
+
         poly_task = asyncio.wait_for(
             self._search_polymarket(query, limit), timeout=UPSTREAM_TIMEOUT
         )

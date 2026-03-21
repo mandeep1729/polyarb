@@ -18,7 +18,7 @@ from app.schemas.market import (
 )
 from app.services.group_service import extract_word_counts
 from app.services.market_service import MarketService
-from app.services.search_utils import build_tsquery
+from app.services.search_utils import build_exclude_tsquery, build_tsquery
 
 logger = structlog.get_logger()
 
@@ -70,11 +70,12 @@ async def market_tags(
     exclude_expired: bool = Query(True, description="Hide expired markets"),
     end_date_min: datetime | None = Query(None, description="Markets expiring on or after"),
     end_date_max: datetime | None = Query(None, description="Markets expiring on or before"),
+    exclude_q: str | None = Query(None, max_length=200, description="Exclude markets matching these terms"),
     limit: int = Query(100, ge=1, le=200, description="Max tags to return"),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """Return tag frequency counts computed from markets matching the given filters."""
-    has_filters = any([q, category, platform, end_date_min, end_date_max, not exclude_expired])
+    has_filters = any([q, category, platform, end_date_min, end_date_max, not exclude_expired, exclude_q])
 
     if not has_filters:
         # No filters — use the admin tag cache for speed
@@ -87,15 +88,16 @@ async def market_tags(
         Platform, Platform.id == UnifiedMarket.platform_id
     )
 
+    ts_vector = func.to_tsvector("english", UnifiedMarket.question)
+
     filters = []
     if q:
         or_query = build_tsquery(q)
         ts_query = func.to_tsquery("english", or_query)
-        ts_vector = func.to_tsvector(
-            "english",
-            UnifiedMarket.question + " " + func.coalesce(UnifiedMarket.description, ""),
-        )
         filters.append(ts_vector.bool_op("@@")(ts_query))
+    if exclude_q:
+        excl_tsquery = build_exclude_tsquery(exclude_q)
+        filters.append(~ts_vector.bool_op("@@")(func.to_tsquery("english", excl_tsquery)))
     if category:
         db_cat = resolve_category(category)
         filters.append(UnifiedMarket.category == (db_cat or category))

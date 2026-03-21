@@ -15,11 +15,12 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export function useSearch(query: string, filters: SearchFilters = {}) {
   const debouncedQuery = useDebounce(query, 300);
+  const hasExclude = !!filters.exclude_q;
 
   return useQuery({
     queryKey: ['search', debouncedQuery, filters],
     queryFn: () => searchMarkets(debouncedQuery, filters),
-    enabled: debouncedQuery.length >= 2,
+    enabled: debouncedQuery.length >= 2 || hasExclude,
     staleTime: 30_000,
   });
 }
