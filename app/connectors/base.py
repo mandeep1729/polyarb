@@ -76,7 +76,7 @@ class BaseConnector(ABC):
                         try:
                             delay = float(retry_after)
                         except ValueError:
-                            pass
+                            logger.debug("retry_after_parse_failed", value=retry_after)
                     logger.warning(
                         "rate_limited",
                         attempt=attempt,
@@ -108,6 +108,7 @@ class BaseConnector(ABC):
                 await asyncio.sleep(delay)
                 last_exc = exc
 
+        logger.error("retry_exhausted", max_retries=max_retries, error=str(last_exc), exc_info=True)
         raise last_exc  # type: ignore[misc]
 
     @abstractmethod

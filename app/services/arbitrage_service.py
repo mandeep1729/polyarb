@@ -1,13 +1,14 @@
-from sqlalchemy import and_, desc, func, select, update
+import structlog
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.market import UnifiedMarket
 from app.models.matched_market import MatchedMarketPair
 from app.models.platform import Platform
 from app.schemas.arbitrage import ArbitrageListResponse, ArbitrageOpportunity
-from app.schemas.common import PaginatedResponse
 from app.schemas.market import MarketResponse
-from app.services.market_service import MarketService
+
+logger = structlog.get_logger()
 
 
 class ArbitrageService:
@@ -100,6 +101,14 @@ class ArbitrageService:
 
         next_cursor = str(rows[-1][0].id) if len(rows) == limit else None
 
+        logger.info(
+            "arbitrage_get_opportunities",
+            total=total,
+            returned=len(items),
+            min_delta=min_delta,
+            category=category,
+        )
+
         return ArbitrageListResponse(
             items=items,
             next_cursor=next_cursor,
@@ -111,6 +120,7 @@ class ArbitrageService:
             select(MatchedMarketPair)
         )
         pairs = result.scalars().all()
+        logger.info("arbitrage_update_deltas_started", total_pairs=len(pairs))
 
         updated_count = 0
         for pair in pairs:
@@ -125,6 +135,14 @@ class ArbitrageService:
             market_b = market_b_result.scalar_one_or_none()
 
             if market_a is None or market_b is None:
+                logger.warning(
+                    "arbitrage_missing_market",
+                    pair_id=pair.id,
+                    market_a_id=pair.market_a_id,
+                    market_b_id=pair.market_b_id,
+                    market_a_missing=market_a is None,
+                    market_b_missing=market_b is None,
+                )
                 continue
 
             delta = self._compute_odds_delta(

@@ -159,8 +159,14 @@ async def _update_polymarket_batch(db, markets: list, connector: PolymarketConne
             if first_old is not None and first_new is not None:
                 try:
                     market.price_change_24h = float(first_new) - float(first_old)
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.warning(
+                        "price_change_parse_error",
+                        market_id=market.id,
+                        old=first_old,
+                        new=first_new,
+                        error=str(exc),
+                    )
 
         snapshot_rows.append({
             "market_id": market.id,
@@ -320,4 +326,4 @@ async def fetch_active_prices() -> None:
             )
         except Exception as exc:
             await db.rollback()
-            logger.error("fetch_active_prices_failed", error=str(exc))
+            logger.error("fetch_active_prices_failed", error=str(exc), exc_info=True)

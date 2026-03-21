@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     BACKFILL_PRICES_INTERVAL_SECONDS: int = 86400
     PRICE_SYNC_TOP_N_GROUPS: int = 100
     BACKFILL_TOP_N_MARKETS: int = 1000
+    SQL_ECHO: bool = True
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -26,4 +26,4 @@ async def run_matching() -> None:
             )
         except Exception as exc:
             await db.rollback()
-            logger.error("run_matching_failed", error=str(exc))
+            logger.error("run_matching_failed", error=str(exc), exc_info=True)

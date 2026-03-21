@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.arbitrage import router as arbitrage_router
 from app.api.groups import router as groups_router
@@ -24,6 +26,34 @@ from app.tasks.scheduler_thread import start_scheduler_thread, stop_scheduler_th
 setup_logging()
 
 logger = structlog.get_logger()
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+            logger.info(
+                "http_request",
+                method=request.method,
+                path=request.url.path,
+                query=str(request.query_params) if request.query_params else None,
+                status=response.status_code,
+                duration_ms=elapsed_ms,
+            )
+            return response
+        except Exception as exc:
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+            logger.error(
+                "http_request_error",
+                method=request.method,
+                path=request.url.path,
+                error=str(exc),
+                duration_ms=elapsed_ms,
+                exc_info=True,
+            )
+            raise
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
@@ -56,6 +86,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -82,5 +113,6 @@ async def trigger_backfill() -> dict:
     """One-off trigger for historical price backfill (runs in uvicorn loop)."""
     import asyncio
     from app.tasks.backfill_prices import run_backfill_inline
+    logger.info("admin_backfill_triggered")
     asyncio.create_task(run_backfill_inline())
     return {"status": "backfill started"}

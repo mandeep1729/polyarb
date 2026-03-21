@@ -50,7 +50,7 @@ class LiveSearchService:
         if isinstance(results[0], list):
             local_results = results[0]
         elif isinstance(results[0], Exception):
-            logger.error("local_search_error", error=str(results[0]))
+            logger.error("local_search_error", error=str(results[0]), exc_info=results[0])
 
         # Build seen set from local results for dedup
         seen: set[tuple[int, str]] = {
@@ -67,7 +67,7 @@ class LiveSearchService:
                 upstream_raw.append((normalized, "polymarket"))
             await poly_connector.close()
         elif isinstance(results[1], Exception):
-            logger.warning("polymarket_upstream_error", error=str(results[1]))
+            logger.error("polymarket_upstream_error", error=str(results[1]), exc_info=results[1])
 
         if isinstance(results[2], list):
             kalshi_connector = KalshiConnector()
@@ -76,7 +76,7 @@ class LiveSearchService:
                 upstream_raw.append((normalized, "kalshi"))
             await kalshi_connector.close()
         elif isinstance(results[2], Exception):
-            logger.warning("kalshi_upstream_error", error=str(results[2]))
+            logger.error("kalshi_upstream_error", error=str(results[2]), exc_info=results[2])
 
         if not upstream_raw:
             return local_results[:limit]
@@ -103,7 +103,6 @@ class LiveSearchService:
         # Upsert new markets and build responses
         new_responses: list[MarketResponse] = []
         if new_markets:
-            platform_names = await self._get_platform_names()
             for normalized, pid in new_markets:
                 market_data = {
                     "platform_id": pid,
@@ -112,10 +111,11 @@ class LiveSearchService:
                 try:
                     await self._market_service.upsert_market(market_data)
                 except Exception as exc:
-                    logger.warning(
+                    logger.error(
                         "upsert_new_market_error",
                         platform_market_id=normalized["platform_market_id"],
                         error=str(exc),
+                        exc_info=True,
                     )
                     continue
 

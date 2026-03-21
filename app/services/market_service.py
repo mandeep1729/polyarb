@@ -1,6 +1,7 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from sqlalchemy import Select, and_, desc, func, select
+import structlog
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,8 @@ from app.schemas.market import (
     PriceSnapshotResponse,
     TrendingMarketResponse,
 )
+
+logger = structlog.get_logger()
 
 SORT_COLUMNS = {
     "volume_24h": UnifiedMarket.volume_24h,
@@ -89,6 +92,15 @@ class MarketService:
 
         next_cursor = str(rows[-1][0].id) if len(rows) == limit else None
 
+        logger.info(
+            "market_service_get_markets",
+            total=total,
+            returned=len(items),
+            platform=platform,
+            category=category,
+            status=status,
+        )
+
         return PaginatedResponse(
             items=items,
             next_cursor=next_cursor,
@@ -103,6 +115,7 @@ class MarketService:
         )
         row = result.one_or_none()
         if row is None:
+            logger.info("market_service_get_market_not_found", market_id=market_id)
             return None
         return self._to_response(row[0], row[1], row[2])
 
@@ -113,14 +126,6 @@ class MarketService:
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[PriceSnapshotResponse]:
-        interval_map = {
-            "1m": "1 minute",
-            "5m": "5 minutes",
-            "1h": "1 hour",
-            "1d": "1 day",
-        }
-        pg_interval = interval_map.get(interval, "1 hour")
-
         query = (
             select(PriceSnapshot)
             .where(PriceSnapshot.market_id == market_id)
@@ -149,7 +154,6 @@ class MarketService:
             ]
 
         # Downsample: group by time bucket
-        from datetime import timedelta
 
         bucket_seconds = {
             "5m": 300,

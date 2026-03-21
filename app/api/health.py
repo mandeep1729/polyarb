@@ -1,11 +1,14 @@
 from datetime import datetime
 
+import structlog
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.models.market import UnifiedMarket
+
+logger = structlog.get_logger()
 
 router = APIRouter(tags=["health"])
 
@@ -25,8 +28,8 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
             select(func.max(UnifiedMarket.last_synced_at))
         )
         last_sync = sync_result.scalar_one()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("health_check_db_error", error=str(exc), exc_info=True)
 
     return {
         "status": "healthy",

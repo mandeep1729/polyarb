@@ -1,7 +1,7 @@
 from datetime import datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -13,6 +13,8 @@ from app.schemas.market import (
     TrendingMarketResponse,
 )
 from app.services.market_service import MarketService
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/markets", tags=["markets"])
 

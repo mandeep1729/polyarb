@@ -95,11 +95,12 @@ class PolymarketConnector(BaseConnector):
                 if isinstance(data, dict):
                     all_prices.update(data)
             except Exception as exc:
-                logger.warning(
+                logger.error(
                     "polymarket_midpoints_error",
                     batch_start=i,
                     batch_size=len(batch),
                     error=str(exc),
+                    exc_info=True,
                 )
 
             if i + batch_size < len(token_ids):
@@ -128,13 +129,13 @@ class PolymarketConnector(BaseConnector):
                         except json.JSONDecodeError:
                             logger.warning("polymarket_ws_invalid_json")
                         except Exception as exc:
-                            logger.error("polymarket_ws_callback_error", error=str(exc))
+                            logger.error("polymarket_ws_callback_error", error=str(exc), exc_info=True)
 
             except websockets.ConnectionClosed as exc:
                 logger.warning("polymarket_ws_disconnected", code=exc.code)
                 await asyncio.sleep(5)
             except Exception as exc:
-                logger.error("polymarket_ws_error", error=str(exc))
+                logger.error("polymarket_ws_error", error=str(exc), exc_info=True)
                 await asyncio.sleep(10)
 
     async def fetch_price_history(
@@ -190,7 +191,7 @@ class PolymarketConnector(BaseConnector):
 
             return markets[:limit]
         except Exception as exc:
-            logger.warning("polymarket_search_error", query=query, error=str(exc))
+            logger.error("polymarket_search_error", query=query, error=str(exc), exc_info=True)
             return []
 
     def normalize(self, raw: dict) -> dict:
@@ -231,24 +232,24 @@ class PolymarketConnector(BaseConnector):
                 if i < len(prices_list):
                     try:
                         outcome_prices[outcome_name] = float(prices_list[i])
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError) as exc:
+                        logger.warning("polymarket_normalize_price_error", outcome=outcome_name, value=prices_list[i], error=str(exc))
 
         end_date = None
         end_str = raw.get("endDate") or raw.get("end_date_iso")
         if end_str:
             try:
                 end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning("polymarket_normalize_end_date_error", end_str=end_str, error=str(exc))
 
         start_date = None
         start_str = raw.get("startDate") or raw.get("start_date_iso")
         if start_str:
             try:
                 start_date = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning("polymarket_normalize_start_date_error", start_str=start_str, error=str(exc))
 
         volume_str = raw.get("volume", "0")
         try:

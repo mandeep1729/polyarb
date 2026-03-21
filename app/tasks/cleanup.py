@@ -36,4 +36,4 @@ async def deactivate_expired_markets() -> None:
             )
         except Exception as exc:
             await db.rollback()
-            logger.error("deactivate_expired_markets_failed", error=str(exc))
+            logger.error("deactivate_expired_markets_failed", error=str(exc), exc_info=True)

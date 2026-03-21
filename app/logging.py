@@ -81,6 +81,13 @@ def setup_logging() -> None:
     for noisy in ("httpx", "httpcore", "asyncio", "urllib3", "hpack"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
+    # SQLAlchemy engine logger — queries logged at INFO when SQL_ECHO is on
+    sa_logger = logging.getLogger("sqlalchemy.engine")
+    sa_logger.handlers.clear()
+    sa_logger.addHandler(file_handler)
+    sa_logger.addHandler(console_handler)
+    sa_logger.setLevel(log_level)
+
     # uvicorn access log also goes to file
     for uvi_logger_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
         uvi_logger = logging.getLogger(uvi_logger_name)

@@ -67,7 +67,7 @@ async def _run_backfill(session_factory) -> tuple[int, int]:
             )
             platforms = {p.slug: p.id for p in result.scalars().all()}
     except Exception as exc:
-        logger.error("backfill_load_platforms_failed", error=str(exc))
+        logger.error("backfill_load_platforms_failed", error=str(exc), exc_info=True)
         return 0, 0
 
     if "polymarket" in platforms:
@@ -75,14 +75,14 @@ async def _run_backfill(session_factory) -> tuple[int, int]:
             async with session_factory() as db:
                 poly_total = await _backfill_polymarket(db, platforms["polymarket"])
         except Exception as exc:
-            logger.error("backfill_polymarket_failed", error=str(exc))
+            logger.error("backfill_polymarket_failed", error=str(exc), exc_info=True)
 
     if "kalshi" in platforms:
         try:
             async with session_factory() as db:
                 kalshi_total = await _backfill_kalshi(db, platforms["kalshi"])
         except Exception as exc:
-            logger.error("backfill_kalshi_failed", error=str(exc))
+            logger.error("backfill_kalshi_failed", error=str(exc), exc_info=True)
 
     return poly_total, kalshi_total
 
@@ -190,10 +190,11 @@ async def _backfill_polymarket(db, platform_id: int) -> int:
                 )
             except Exception as exc:
                 await db.rollback()
-                logger.warning(
+                logger.error(
                     "backfill_polymarket_market_error",
                     market_id=market.id,
                     error=str(exc),
+                    exc_info=True,
                 )
     finally:
         await connector.close()
@@ -276,10 +277,11 @@ async def _backfill_kalshi(db, platform_id: int) -> int:
             await asyncio.sleep(0.5)
         except Exception as exc:
             await db.rollback()
-            logger.warning(
+            logger.error(
                 "backfill_kalshi_market_error",
                 market_id=market.id,
                 error=str(exc),
+                exc_info=True,
             )
 
     return total_inserted

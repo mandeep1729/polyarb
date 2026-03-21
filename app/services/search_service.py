@@ -1,3 +1,4 @@
+import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,6 +8,8 @@ from app.models.platform import Platform
 from app.schemas.market import MarketResponse
 from app.services.market_service import MarketService
 from app.services.search_utils import build_tsquery
+
+logger = structlog.get_logger()
 
 
 class SearchService:
@@ -89,7 +92,17 @@ class SearchService:
         else:
             combined_rows = list(rows)
 
-        return [
+        results = [
             MarketService._to_response(row[0], row[1], row[2])
             for row in combined_rows
         ]
+
+        logger.info(
+            "search_service_search",
+            query=query,
+            fts_results=len(rows),
+            fallback_results=len(combined_rows) - len(rows),
+            total=len(results),
+        )
+
+        return results

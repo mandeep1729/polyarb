@@ -1,4 +1,8 @@
-"""Materialized group-level price snapshots for fast historical queries."""
+"""DEPRECATED: Group history is now derived from member market price_snapshots
+via SQL aggregation in group_service.get_group_history().
+
+This table (group_price_snapshots) has 0 rows and is no longer written to.
+Kept to avoid a migration; safe to drop in a future cleanup."""
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Index, func

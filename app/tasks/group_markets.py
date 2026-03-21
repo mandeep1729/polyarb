@@ -16,7 +16,6 @@ from app.config import settings
 from app.database import get_background_session_factory
 from app.matching.scorer import _end_date_gate, score_pair
 from app.matching.text import build_tfidf_matrix, get_candidates, preprocess
-from app.models.group_snapshot import GroupPriceSnapshot
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
 
@@ -612,16 +611,6 @@ async def _phase3_compute_analytics(db) -> int:
             if member_cats:
                 from collections import Counter
                 group.category = Counter(member_cats).most_common(1)[0][0]
-
-        # Create materialized snapshot
-        snapshot = GroupPriceSnapshot(
-            group_id=group.id,
-            consensus_yes=group.consensus_yes,
-            consensus_no=group.consensus_no,
-            disagreement_score=group.disagreement_score,
-            total_volume=group.total_volume,
-        )
-        db.add(snapshot)
 
         db.add(group)
         updated += 1

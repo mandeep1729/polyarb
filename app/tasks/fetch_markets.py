@@ -1,4 +1,3 @@
-import asyncio
 
 import structlog
 from sqlalchemy import select

@@ -1,10 +1,12 @@
+import structlog
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.schemas.arbitrage import ArbitrageListResponse
-from app.schemas.common import SortField
 from app.services.arbitrage_service import ArbitrageService
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/arbitrage", tags=["arbitrage"])
 

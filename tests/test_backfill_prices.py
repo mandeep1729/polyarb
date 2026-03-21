@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,

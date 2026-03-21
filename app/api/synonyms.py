@@ -2,9 +2,12 @@
 import fcntl
 import json
 
+import structlog
 import app.matching.synonyms as synonyms_mod
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/synonyms", tags=["synonyms"])
 
@@ -54,6 +57,7 @@ async def add_synonym_group(body: SynonymGroupInput) -> dict:
     groups = _read_groups()
     groups.append(body.words)
     _write_groups(groups)
+    logger.info("synonym_group_added", words=body.words)
     return {"custom": groups}
 
 
@@ -65,6 +69,7 @@ async def update_synonym_group(index: int, body: SynonymGroupInput) -> dict:
         raise HTTPException(status_code=404, detail="Synonym group not found")
     groups[index] = body.words
     _write_groups(groups)
+    logger.info("synonym_group_updated", index=index, words=body.words)
     return {"custom": groups}
 
 
@@ -76,4 +81,5 @@ async def delete_synonym_group(index: int) -> dict:
         raise HTTPException(status_code=404, detail="Synonym group not found")
     groups.pop(index)
     _write_groups(groups)
+    logger.info("synonym_group_deleted", index=index)
     return {"custom": groups}

@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 
 import structlog
 from kalshi_python_sync import Configuration, KalshiClient, EventsApi, MarketApi
@@ -57,8 +57,20 @@ class KalshiConnector:
                     import time
                     time.sleep(1.0 * (attempt + 1))
                     continue
+                logger.warning(
+                    "kalshi_series_title_http_error",
+                    series_ticker=series_ticker,
+                    status=exc.code,
+                    attempt=attempt,
+                )
                 return None
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "kalshi_series_title_error",
+                    series_ticker=series_ticker,
+                    error=str(exc),
+                    attempt=attempt,
+                )
                 return None
         return None
 
@@ -110,7 +122,7 @@ class KalshiConnector:
             try:
                 data = await asyncio.to_thread(self._get_events_raw, **kwargs)
             except Exception as exc:
-                logger.warning("kalshi_events_fetch_error", error=str(exc))
+                logger.error("kalshi_events_fetch_error", error=str(exc), exc_info=True)
                 break
 
             events = data.get("events") or []
@@ -198,10 +210,11 @@ class KalshiConnector:
                 markets = data.get("markets") or []
                 results.extend(markets)
             except Exception as exc:
-                logger.warning(
+                logger.error(
                     "kalshi_batch_price_error",
                     chunk_start=i,
                     error=str(exc),
+                    exc_info=True,
                 )
 
         return results
@@ -271,10 +284,11 @@ class KalshiConnector:
                             market["series_ticker"] = st
                             matching_markets.append(market)
                     except Exception as exc:
-                        logger.warning(
+                        logger.error(
                             "kalshi_search_event_error",
                             event_ticker=et,
                             error=str(exc),
+                            exc_info=True,
                         )
 
                 cursor = data.get("cursor")
@@ -295,7 +309,7 @@ class KalshiConnector:
             return matching_markets[:limit]
 
         except Exception as exc:
-            logger.warning("kalshi_search_error", query=query, error=str(exc))
+            logger.error("kalshi_search_error", query=query, error=str(exc), exc_info=True)
             return []
 
     def normalize(self, raw: dict) -> dict:
@@ -328,8 +342,8 @@ class KalshiConnector:
                 end_date = datetime.fromisoformat(
                     str(close_time).replace("Z", "+00:00")
                 )
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning("kalshi_normalize_end_date_error", close_time=close_time, error=str(exc))
 
         start_date = None
         open_time = raw.get("open_time")
@@ -338,8 +352,8 @@ class KalshiConnector:
                 start_date = datetime.fromisoformat(
                     str(open_time).replace("Z", "+00:00")
                 )
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning("kalshi_normalize_start_date_error", open_time=open_time, error=str(exc))
 
         volume_total = first_float(raw, "volume", "volume_fp") or 0.0
         volume_24h = first_float(raw, "volume_24h", "volume_24h_fp") or 0.0

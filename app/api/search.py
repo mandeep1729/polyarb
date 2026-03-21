@@ -1,9 +1,12 @@
+import structlog
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.schemas.market import MarketResponse
 from app.services.live_search_service import LiveSearchService
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/search", tags=["search"])
 

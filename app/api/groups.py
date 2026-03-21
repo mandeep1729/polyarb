@@ -1,6 +1,7 @@
 """API endpoints for market groups."""
 import asyncio
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,8 @@ from app.schemas.group import (
 )
 from app.services.group_service import GroupService
 from app.tasks.group_markets import _load_group_representatives, run_full_grouping
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -79,7 +82,11 @@ async def trigger_regroup() -> dict:
     async def _run() -> None:
         global _regroup_running
         try:
+            logger.info("manual_regroup_started")
             await run_full_grouping()
+            logger.info("manual_regroup_complete")
+        except Exception as exc:
+            logger.error("manual_regroup_failed", error=str(exc), exc_info=True)
         finally:
             _regroup_running = False
 

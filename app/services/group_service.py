@@ -1,18 +1,21 @@
 """Service for querying market groups and their analytics."""
+from __future__ import annotations
+
 import json
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import and_, desc, func, select
+import structlog
+from sqlalchemy import Float, and_, case, cast, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category
 from app.services.search_utils import build_tsquery
-from app.models.group_snapshot import GroupPriceSnapshot
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
+from app.models.price_history import PriceSnapshot
 from app.models.platform import Platform
 from app.schemas.common import PaginatedResponse
 from app.schemas.group import (
@@ -21,6 +24,8 @@ from app.schemas.group import (
     GroupSnapshotResponse,
 )
 from app.schemas.market import MarketResponse
+
+logger = structlog.get_logger()
 
 SORT_COLUMNS = {
     "disagreement": MarketGroup.disagreement_score,
@@ -101,6 +106,8 @@ class GroupService:
         items = [GroupResponse.model_validate(g) for g in groups]
         next_cursor = str(groups[-1].id) if len(groups) == limit else None
 
+        logger.info("group_service_get_groups", total=total, returned=len(items), category=category, sort_by=sort_by)
+
         return PaginatedResponse(items=items, next_cursor=next_cursor, total=total)
 
     async def search_groups(
@@ -167,6 +174,9 @@ class GroupService:
             all_groups = [row[0] for row in rows]
 
         items = [GroupResponse.model_validate(g) for g in all_groups]
+
+        logger.info("group_service_search_groups", query=query, total=len(items), category=category)
+
         return PaginatedResponse(items=items, next_cursor=None, total=len(items))
 
     async def get_category_counts(self) -> list[dict]:
@@ -235,6 +245,7 @@ class GroupService:
         )
         group = result.scalar_one_or_none()
         if group is None:
+            logger.info("group_service_group_not_found", group_id=group_id)
             return None
 
         # Get members with platform info
@@ -272,19 +283,52 @@ class GroupService:
         group_id: int,
         days: int = 30,
     ) -> list[GroupSnapshotResponse]:
-        """Return materialized consensus history for a group."""
+        """Derive consensus history from member market price snapshots."""
         max_days = min(days, 90)
         since = datetime.now(timezone.utc) - timedelta(days=max_days)
 
-        result = await self._db.execute(
-            select(GroupPriceSnapshot)
-            .where(GroupPriceSnapshot.group_id == group_id)
-            .where(GroupPriceSnapshot.timestamp >= since)
-            .order_by(GroupPriceSnapshot.timestamp)
-        )
-        snapshots = result.scalars().all()
+        yes_price = cast(PriceSnapshot.outcome_prices["Yes"].as_string(), Float)
+        no_price = cast(PriceSnapshot.outcome_prices["No"].as_string(), Float)
 
-        return [GroupSnapshotResponse.model_validate(s) for s in snapshots]
+        stmt = (
+            select(
+                PriceSnapshot.timestamp,
+                func.avg(yes_price).label("consensus_yes"),
+                func.avg(no_price).label("consensus_no"),
+                case(
+                    (
+                        func.count(yes_price) >= 2,
+                        func.max(yes_price) - func.min(yes_price),
+                    ),
+                    else_=None,
+                ).label("disagreement_score"),
+                func.sum(PriceSnapshot.volume).label("total_volume"),
+            )
+            .join(
+                MarketGroupMember,
+                MarketGroupMember.market_id == PriceSnapshot.market_id,
+            )
+            .where(
+                MarketGroupMember.group_id == group_id,
+                PriceSnapshot.timestamp >= since,
+            )
+            .group_by(PriceSnapshot.timestamp)
+            .order_by(PriceSnapshot.timestamp)
+        )
+
+        result = await self._db.execute(stmt)
+        rows = result.all()
+
+        return [
+            GroupSnapshotResponse(
+                timestamp=row.timestamp,
+                consensus_yes=round(row.consensus_yes, 4) if row.consensus_yes is not None else None,
+                consensus_no=round(row.consensus_no, 4) if row.consensus_no is not None else None,
+                disagreement_score=round(row.disagreement_score, 4) if row.disagreement_score is not None else None,
+                total_volume=round(row.total_volume, 2) if row.total_volume is not None else None,
+            )
+            for row in rows
+        ]
 
     async def _get_market_response(self, market_id: int) -> MarketResponse | None:
         """Fetch a single market with platform info as MarketResponse."""
