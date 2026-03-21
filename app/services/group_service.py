@@ -35,6 +35,13 @@ _TAG_NOISE_PATH = (
 )
 _TAG_NOISE: frozenset[str] = frozenset(json.loads(_TAG_NOISE_PATH.read_text()))
 _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+_TIME_RE = re.compile(r"^\d{1,2}[ap]m$")
+_ORDINAL_RE = re.compile(r"^\d+(?:st|nd|rd|th)$")
+_MONEY_SIZE_RE = re.compile(r"^\d+[bkmt]{1,2}$")
+_BASIS_POINTS_RE = re.compile(r"^\d+bps?$")
+_TEMPERATURE_RE = re.compile(r"^\d+[°ºc]+$")
+
+_NUMERIC_NOISE_PATTERNS = (_TIME_RE, _ORDINAL_RE, _MONEY_SIZE_RE, _BASIS_POINTS_RE, _TEMPERATURE_RE)
 
 
 def extract_word_counts(questions: list[str]) -> Counter[str]:
@@ -53,6 +60,7 @@ def extract_word_counts(questions: list[str]) -> Counter[str]:
                 and word not in _TAG_NOISE
                 and not word.isdigit()
                 and not _YEAR_RE.match(word)
+                and not any(p.match(word) for p in _NUMERIC_NOISE_PATTERNS)
             ):
                 counter[word] += 1
     return counter

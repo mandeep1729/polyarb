@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getAdminStats, searchAdminTags, type AdminStats } from '@/lib/api';
 import { cn } from '@/lib/utils/format';
-import { Search, AlertCircle, X } from 'lucide-react';
+import { Search, AlertCircle, X, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 
 // --- Health indicator logic ---
 
@@ -239,7 +239,7 @@ function OverviewTab({ data }: { data: AdminStats }) {
 
 // --- Tags Tab ---
 
-const DEFAULT_TAG_COUNT = 100;
+const PAGE_SIZE = 50;
 
 function useDebounce(value: string, delay: number): string {
   const [debounced, setDebounced] = useState(value);
@@ -250,10 +250,14 @@ function useDebounce(value: string, delay: number): string {
   return debounced;
 }
 
+type SortDir = 'desc' | 'asc';
+
 function TagsTab({ data }: { data: AdminStats }) {
   const [search, setSearch] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedTag, setSelectedTag] = useState<Record<string, string | number> | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [page, setPage] = useState(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debouncedSearch = useDebounce(search, 200);
 
@@ -276,11 +280,25 @@ function TagsTab({ data }: { data: AdminStats }) {
     staleTime: 30_000,
   });
 
-  // Table: default top 100, or selected search result
+  // Sort all tags by frequency
+  const sortedTags = useMemo(() => {
+    const sorted = [...data.tags].sort((a, b) => {
+      const aTotal = Number(a.total);
+      const bTotal = Number(b.total);
+      return sortDir === 'desc' ? bTotal - aTotal : aTotal - bTotal;
+    });
+    return sorted;
+  }, [data.tags, sortDir]);
+
+  // Paginated slice
+  const totalTags = sortedTags.length;
+  const totalPages = Math.ceil(totalTags / PAGE_SIZE);
+
   const tableData = useMemo(() => {
     if (selectedTag) return [selectedTag];
-    return data.tags.slice(0, DEFAULT_TAG_COUNT);
-  }, [data.tags, selectedTag]);
+    const start = page * PAGE_SIZE;
+    return sortedTags.slice(start, start + PAGE_SIZE);
+  }, [sortedTags, selectedTag, page]);
 
   const selectSuggestion = (tag: Record<string, string | number>) => {
     setSelectedTag(tag);
@@ -294,49 +312,69 @@ function TagsTab({ data }: { data: AdminStats }) {
     setShowSuggestions(false);
   };
 
+  const toggleSort = () => {
+    setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    setPage(0);
+  };
+
+  const SortIcon = sortDir === 'desc' ? ChevronDown : ChevronUp;
+
   return (
     <div className="space-y-3">
-      {/* Search with server-side autocomplete */}
-      <div ref={wrapperRef} className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
-        <input
-          type="text"
-          placeholder="Search all tags (3+ chars)..."
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setSelectedTag(null);
-            setShowSuggestions(e.target.value.length >= 3);
-          }}
-          onFocus={() => { if (search.length >= 3 && !selectedTag) setShowSuggestions(true); }}
-          className="w-full rounded-lg border border-gray-800 bg-gray-900 py-2 pl-9 pr-8 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
-        />
-        {search && (
-          <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
+      {/* Controls row */}
+      <div className="flex items-center gap-4">
+        {/* Search with server-side autocomplete */}
+        <div ref={wrapperRef} className="relative max-w-sm flex-1">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Search all tags (3+ chars)..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setSelectedTag(null);
+              setShowSuggestions(e.target.value.length >= 3);
+            }}
+            onFocus={() => { if (search.length >= 3 && !selectedTag) setShowSuggestions(true); }}
+            className="w-full rounded-lg border border-gray-800 bg-gray-900 py-2 pl-9 pr-8 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
+          />
+          {search && (
+            <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
 
-        {/* Autocomplete dropdown */}
-        {showSuggestions && suggestions && suggestions.length > 0 && (
-          <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-lg">
-            {suggestions.map((s) => (
-              <button
-                key={String(s.term)}
-                onClick={() => selectSuggestion(s)}
-                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800"
-              >
-                <span>{String(s.term)}</span>
-                <span className="text-xs text-gray-600">{Number(s.total).toLocaleString()}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {showSuggestions && debouncedSearch.length >= 3 && suggestions && suggestions.length === 0 && (
-          <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-500 shadow-lg">
-            No tags matching "{debouncedSearch}"
-          </div>
-        )}
+          {/* Autocomplete dropdown */}
+          {showSuggestions && suggestions && suggestions.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-lg">
+              {suggestions.map((s) => (
+                <button
+                  key={String(s.term)}
+                  onClick={() => selectSuggestion(s)}
+                  className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800"
+                >
+                  <span>{String(s.term)}</span>
+                  <span className="text-xs text-gray-600">{Number(s.total).toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {showSuggestions && debouncedSearch.length >= 3 && suggestions && suggestions.length === 0 && (
+            <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-500 shadow-lg">
+              No tags matching &quot;{debouncedSearch}&quot;
+            </div>
+          )}
+        </div>
+
+        {/* Sort toggle */}
+        <button
+          onClick={toggleSort}
+          className="flex items-center gap-1 rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-300 hover:border-gray-700 hover:text-gray-100"
+        >
+          Frequency
+          <SortIcon className="h-3.5 w-3.5" />
+          <span className="text-xs text-gray-500">{sortDir === 'desc' ? 'Descending' : 'Ascending'}</span>
+        </button>
       </div>
 
       {/* Table */}
@@ -345,7 +383,14 @@ function TagsTab({ data }: { data: AdminStats }) {
           <thead className="bg-gray-900 text-gray-500">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Term</th>
-              <th className="px-3 py-2 text-right font-medium">Total</th>
+              <th
+                className="cursor-pointer select-none px-3 py-2 text-right font-medium hover:text-gray-300"
+                onClick={toggleSort}
+              >
+                <span className="inline-flex items-center gap-1">
+                  Total <SortIcon className="h-3 w-3" />
+                </span>
+              </th>
               {data.platform_slugs.map((slug) => (
                 <th key={slug} className="px-3 py-2 text-right font-medium capitalize">{slug}</th>
               ))}
@@ -367,11 +412,50 @@ function TagsTab({ data }: { data: AdminStats }) {
         </table>
       </div>
 
-      <p className="text-xs text-gray-600">
-        {selectedTag
-          ? 'Showing search result — clear to see top tags'
-          : `Showing top ${Math.min(DEFAULT_TAG_COUNT, data.tags.length)} of ${data.tags.length} tags`}
-      </p>
+      {/* Pagination */}
+      {!selectedTag && totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-gray-600">
+            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalTags)} of {totalTags.toLocaleString()} tags
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage(0)}
+              disabled={page === 0}
+              className="rounded px-2 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              First
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="rounded p-1 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="px-2 text-xs text-gray-400">
+              Page {page + 1} of {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1}
+              className="rounded p-1 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setPage(totalPages - 1)}
+              disabled={page >= totalPages - 1}
+              className="rounded px-2 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              Last
+            </button>
+          </div>
+        </div>
+      )}
+      {selectedTag && (
+        <p className="text-xs text-gray-600">Showing search result — clear to see all tags</p>
+      )}
     </div>
   );
 }
