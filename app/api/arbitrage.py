@@ -38,6 +38,22 @@ class ManualPairInput(BaseModel):
     market_b_id: int
 
 
+class LLMVerifiedPair(BaseModel):
+    """A single verified pair from LLM review."""
+
+    market_a_id: int
+    market_b_id: int
+    confidence: float
+    outcome_mapping: dict[str, str] | None = None
+    explanation: str | None = None
+
+
+class ImportVerifiedInput(BaseModel):
+    """Batch of LLM-verified pairs to import."""
+
+    pairs: list[LLMVerifiedPair]
+
+
 @router.post("/pair", status_code=201)
 async def create_manual_pair(
     body: ManualPairInput,
@@ -58,3 +74,36 @@ async def create_manual_pair(
         "odds_delta": pair.odds_delta,
         "match_method": pair.match_method,
     }
+
+
+@router.post("/import-verified", status_code=201)
+async def import_verified_pairs(
+    body: ImportVerifiedInput,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Import a batch of LLM-verified market pairs."""
+    service = ArbitrageService(db)
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for p in body.pairs:
+        try:
+            await service.create_verified_pair(
+                market_a_id=p.market_a_id,
+                market_b_id=p.market_b_id,
+                confidence=p.confidence,
+                outcome_mapping=p.outcome_mapping,
+                explanation=p.explanation,
+            )
+            imported += 1
+        except ValueError as exc:
+            skipped += 1
+            errors.append(f"{p.market_a_id}-{p.market_b_id}: {exc}")
+
+    logger.info(
+        "import_verified_pairs",
+        imported=imported,
+        skipped=skipped,
+    )
+    return {"imported": imported, "skipped": skipped, "errors": errors}

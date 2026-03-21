@@ -176,6 +176,100 @@ class ArbitrageService:
         )
         return pair
 
+    async def create_verified_pair(
+        self,
+        market_a_id: int,
+        market_b_id: int,
+        confidence: float,
+        outcome_mapping: dict[str, str] | None = None,
+        explanation: str | None = None,
+    ) -> MatchedMarketPair:
+        """Create an LLM-verified arbitrage pair.
+
+        Uses outcome_mapping for correct delta calculation when outcome
+        labels differ across platforms (e.g. Yes/No vs Above/Below).
+        """
+        lo, hi = sorted([market_a_id, market_b_id])
+
+        existing = await self._db.execute(
+            select(MatchedMarketPair).where(
+                MatchedMarketPair.market_a_id == lo,
+                MatchedMarketPair.market_b_id == hi,
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise ValueError("This pair already exists")
+
+        result_a = await self._db.execute(
+            select(UnifiedMarket).where(UnifiedMarket.id == lo)
+        )
+        market_a = result_a.scalar_one_or_none()
+        result_b = await self._db.execute(
+            select(UnifiedMarket).where(UnifiedMarket.id == hi)
+        )
+        market_b = result_b.scalar_one_or_none()
+
+        if market_a is None or market_b is None:
+            raise ValueError("One or both markets not found")
+        if market_a.platform_id == market_b.platform_id:
+            raise ValueError("Markets must be on different platforms")
+
+        prices_a = market_a.outcome_prices or {}
+        prices_b = market_b.outcome_prices or {}
+
+        # Use outcome mapping for correct delta if provided
+        if outcome_mapping:
+            # Determine which market's IDs were used as keys in the mapping
+            # mapping is {market_a_outcome: market_b_outcome}
+            # Need to figure out if lo == market_a_id from the original input
+            if market_a_id <= market_b_id:
+                mapped_a, mapped_b = prices_a, prices_b
+                mapping = outcome_mapping
+            else:
+                mapped_a, mapped_b = prices_b, prices_a
+                mapping = {v: k for k, v in outcome_mapping.items()}
+            delta = self._compute_mapped_delta(mapped_a, mapped_b, mapping)
+        else:
+            delta = self._compute_odds_delta(prices_a, prices_b)
+
+        pair = MatchedMarketPair(
+            market_a_id=lo,
+            market_b_id=hi,
+            similarity_score=confidence,
+            odds_delta=delta,
+            match_method="llm_verified",
+            category=market_a.category or market_b.category,
+        )
+        self._db.add(pair)
+        await self._db.flush()
+
+        logger.info(
+            "llm_verified_pair_created",
+            pair_id=pair.id,
+            market_a_id=lo,
+            market_b_id=hi,
+            confidence=confidence,
+            odds_delta=delta,
+            outcome_mapping=outcome_mapping,
+            explanation=explanation,
+        )
+        return pair
+
+    @staticmethod
+    def _compute_mapped_delta(
+        prices_a: dict, prices_b: dict, mapping: dict[str, str],
+    ) -> float:
+        """Compute odds delta using explicit outcome mapping."""
+        max_delta = 0.0
+        for outcome_a, outcome_b in mapping.items():
+            try:
+                price_a = float(prices_a.get(outcome_a, 0))
+                price_b = float(prices_b.get(outcome_b, 0))
+                max_delta = max(max_delta, abs(price_a - price_b))
+            except (ValueError, TypeError):
+                continue
+        return max_delta
+
     async def update_deltas(self) -> int:
         result = await self._db.execute(
             select(MatchedMarketPair)
