@@ -115,6 +115,67 @@ class ArbitrageService:
             total=total,
         )
 
+    async def create_manual_pair(
+        self, market_a_id: int, market_b_id: int,
+    ) -> MatchedMarketPair:
+        """Create a manual arbitrage pair from two market IDs.
+
+        Validates both markets exist and are on different platforms.
+        Computes odds_delta immediately. Enforces market_a_id < market_b_id.
+        """
+        # Normalize ordering for the check constraint
+        lo, hi = sorted([market_a_id, market_b_id])
+
+        # Check for existing pair
+        existing = await self._db.execute(
+            select(MatchedMarketPair).where(
+                MatchedMarketPair.market_a_id == lo,
+                MatchedMarketPair.market_b_id == hi,
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise ValueError("This pair already exists")
+
+        # Fetch both markets
+        result_a = await self._db.execute(
+            select(UnifiedMarket).where(UnifiedMarket.id == lo)
+        )
+        market_a = result_a.scalar_one_or_none()
+        result_b = await self._db.execute(
+            select(UnifiedMarket).where(UnifiedMarket.id == hi)
+        )
+        market_b = result_b.scalar_one_or_none()
+
+        if market_a is None or market_b is None:
+            raise ValueError("One or both markets not found")
+        if market_a.platform_id == market_b.platform_id:
+            raise ValueError("Markets must be on different platforms")
+
+        delta = self._compute_odds_delta(
+            market_a.outcome_prices or {},
+            market_b.outcome_prices or {},
+        )
+
+        pair = MatchedMarketPair(
+            market_a_id=lo,
+            market_b_id=hi,
+            similarity_score=1.0,
+            odds_delta=delta,
+            match_method="manual",
+            category=market_a.category or market_b.category,
+        )
+        self._db.add(pair)
+        await self._db.flush()
+
+        logger.info(
+            "manual_pair_created",
+            pair_id=pair.id,
+            market_a_id=lo,
+            market_b_id=hi,
+            odds_delta=delta,
+        )
+        return pair
+
     async def update_deltas(self) -> int:
         result = await self._db.execute(
             select(MatchedMarketPair)
