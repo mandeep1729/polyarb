@@ -209,3 +209,4 @@ __marimo__/
 # Polyarb local data and logs
 logs/
 data/
+.gstack/
