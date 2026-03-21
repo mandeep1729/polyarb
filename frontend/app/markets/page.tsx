@@ -12,8 +12,9 @@ import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
 import { X, Search } from 'lucide-react';
 
-// Convert date-only string to end-of-day for inclusive range
-const endOfDay = (date: string) => `${date}T23:59:59-04:00`;
+// Convert date-only strings to EST timestamps for inclusive range
+const startOfDay = (date: string) => `${date}T00:00:00-05:00`;
+const endOfDay = (date: string) => `${date}T23:59:59-05:00`;
 
 function useDebounce(value: string, delay: number): string {
   const [debounced, setDebounced] = useState(value);
@@ -130,7 +131,7 @@ function MarketsContent() {
     q: combinedQuery || undefined,
     category: resolvedCategory,
     exclude_expired: !showExpired,
-    end_date_min: dateRange.min || undefined,
+    end_date_min: dateRange.min ? startOfDay(dateRange.min) : undefined,
     end_date_max: dateRange.max ? endOfDay(dateRange.max) : undefined,
     exclude_q: excludeQuery || undefined,
     limit: 100,
@@ -334,7 +335,7 @@ function MarketsContent() {
             searchQuery={combinedQuery}
             excludeQuery={excludeQuery}
             category={resolvedCategory}
-            endDateMin={dateRange.min || undefined}
+            endDateMin={dateRange.min ? startOfDay(dateRange.min) : undefined}
             endDateMax={dateRange.max ? endOfDay(dateRange.max) : undefined}
             excludeExpired={!showExpired}
           />
