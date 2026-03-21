@@ -1,4 +1,5 @@
-"""API endpoints for managing custom word equivalences (synonym groups)."""
+"""API endpoints for managing synonym equivalence groups."""
+
 import fcntl
 import json
 
@@ -27,11 +28,11 @@ class SynonymGroupInput(BaseModel):
 
 
 def _read_groups() -> list[list[str]]:
-    return synonyms_mod.load_custom_synonyms()
+    return synonyms_mod.load_synonym_groups()
 
 
 def _write_groups(groups: list[list[str]]) -> None:
-    path = synonyms_mod.CUSTOM_SYNONYMS_PATH
+    path = synonyms_mod.SYNONYMS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
@@ -44,11 +45,8 @@ def _write_groups(groups: list[list[str]]) -> None:
 
 @router.get("")
 async def list_synonyms() -> dict:
-    """Return custom and built-in synonym groups."""
-    return {
-        "custom": _read_groups(),
-        "builtin": synonyms_mod.get_builtin_synonym_groups(),
-    }
+    """Return all synonym groups."""
+    return {"groups": _read_groups()}
 
 
 @router.post("", status_code=201)
@@ -58,7 +56,7 @@ async def add_synonym_group(body: SynonymGroupInput) -> dict:
     groups.append(body.words)
     _write_groups(groups)
     logger.info("synonym_group_added", words=body.words)
-    return {"custom": groups}
+    return {"groups": groups}
 
 
 @router.put("/{index}")
@@ -70,7 +68,7 @@ async def update_synonym_group(index: int, body: SynonymGroupInput) -> dict:
     groups[index] = body.words
     _write_groups(groups)
     logger.info("synonym_group_updated", index=index, words=body.words)
-    return {"custom": groups}
+    return {"groups": groups}
 
 
 @router.delete("/{index}")
@@ -82,4 +80,4 @@ async def delete_synonym_group(index: int) -> dict:
     groups.pop(index)
     _write_groups(groups)
     logger.info("synonym_group_deleted", index=index)
-    return {"custom": groups}
+    return {"groups": groups}

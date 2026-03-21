@@ -1,4 +1,5 @@
-"""Tests for custom synonym loading, merging, and API endpoints."""
+"""Tests for synonym loading, expansion, and API endpoints."""
+
 import json
 from pathlib import Path
 
@@ -7,12 +8,11 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.matching.synonyms import (
-    SYNONYMS,
     _groups_to_dict,
     expand_synonyms,
     get_all_synonyms,
-    get_builtin_synonym_groups,
-    load_custom_synonyms,
+    load_synonym_groups,
+    SYNONYMS_PATH,
 )
 
 
@@ -21,26 +21,26 @@ from app.matching.synonyms import (
 # ---------------------------------------------------------------------------
 
 
-class TestLoadCustomSynonyms:
+class TestLoadSynonymGroups:
     def test_missing_file(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr(
-            "app.matching.synonyms.CUSTOM_SYNONYMS_PATH",
+            "app.matching.synonyms.SYNONYMS_PATH",
             tmp_path / "nonexistent.json",
         )
-        assert load_custom_synonyms() == []
+        assert load_synonym_groups() == []
 
     def test_empty_file(self, tmp_path: Path, monkeypatch):
         f = tmp_path / "empty.json"
         f.write_text("")
-        monkeypatch.setattr("app.matching.synonyms.CUSTOM_SYNONYMS_PATH", f)
-        assert load_custom_synonyms() == []
+        monkeypatch.setattr("app.matching.synonyms.SYNONYMS_PATH", f)
+        assert load_synonym_groups() == []
 
     def test_valid_file(self, tmp_path: Path, monkeypatch):
         f = tmp_path / "syns.json"
         groups = [["crude", "wti"], ["oil", "petroleum"]]
         f.write_text(json.dumps(groups))
-        monkeypatch.setattr("app.matching.synonyms.CUSTOM_SYNONYMS_PATH", f)
-        assert load_custom_synonyms() == groups
+        monkeypatch.setattr("app.matching.synonyms.SYNONYMS_PATH", f)
+        assert load_synonym_groups() == groups
 
 
 class TestGroupsToDict:
@@ -58,66 +58,75 @@ class TestGroupsToDict:
     def test_empty_groups(self):
         assert _groups_to_dict([]) == {}
 
+    def test_overlapping_groups_merge(self):
+        result = _groups_to_dict([["a", "b"], ["a", "c"]])
+        assert set(result["a"]) == {"b", "c"}
+
 
 class TestGetAllSynonyms:
-    def test_merges_custom_and_builtin(self, tmp_path: Path, monkeypatch):
+    def test_loads_from_config(self, tmp_path: Path, monkeypatch):
         f = tmp_path / "syns.json"
-        f.write_text(json.dumps([["crude", "wti"]]))
-        monkeypatch.setattr("app.matching.synonyms.CUSTOM_SYNONYMS_PATH", f)
+        f.write_text(json.dumps([["crude", "wti"], ["btc", "bitcoin"]]))
+        monkeypatch.setattr("app.matching.synonyms.SYNONYMS_PATH", f)
         merged = get_all_synonyms()
-        # Custom synonyms present
         assert "wti" in merged["crude"]
         assert "crude" in merged["wti"]
-        # Built-in synonyms still present
         assert "bitcoin" in merged["btc"]
 
-    def test_custom_extends_builtin(self, tmp_path: Path, monkeypatch):
-        # Add a new synonym for an existing builtin key
-        f = tmp_path / "syns.json"
-        f.write_text(json.dumps([["btc", "xbt"]]))
-        monkeypatch.setattr("app.matching.synonyms.CUSTOM_SYNONYMS_PATH", f)
-        merged = get_all_synonyms()
-        assert "xbt" in merged["btc"]
-        assert "bitcoin" in merged["btc"]  # original still there
-
-    def test_no_custom_file(self, tmp_path: Path, monkeypatch):
+    def test_empty_when_no_file(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr(
-            "app.matching.synonyms.CUSTOM_SYNONYMS_PATH",
+            "app.matching.synonyms.SYNONYMS_PATH",
             tmp_path / "missing.json",
         )
-        merged = get_all_synonyms()
-        assert merged == SYNONYMS
+        assert get_all_synonyms() == {}
 
 
-class TestExpandSynonymsWithCustom:
-    def test_custom_expansion(self, tmp_path: Path, monkeypatch):
+class TestExpandSynonyms:
+    def test_unigram_expansion(self, tmp_path: Path, monkeypatch):
         f = tmp_path / "syns.json"
         f.write_text(json.dumps([["crude", "wti"]]))
-        monkeypatch.setattr("app.matching.synonyms.CUSTOM_SYNONYMS_PATH", f)
+        monkeypatch.setattr("app.matching.synonyms.SYNONYMS_PATH", f)
         result = expand_synonyms("crude oil prices")
         assert "wti" in result
 
-    def test_builtin_still_works(self, tmp_path: Path, monkeypatch):
+    def test_bigram_expansion(self, tmp_path: Path, monkeypatch):
         f = tmp_path / "syns.json"
-        f.write_text("[]")
-        monkeypatch.setattr("app.matching.synonyms.CUSTOM_SYNONYMS_PATH", f)
-        result = expand_synonyms("btc price")
-        assert "bitcoin" in result
+        f.write_text(json.dumps([["rate cut", "interest rate decrease"]]))
+        monkeypatch.setattr("app.matching.synonyms.SYNONYMS_PATH", f)
+        result = expand_synonyms("fed rate cut")
+        assert "interest" in result
+
+    def test_no_expansion_when_no_match(self, tmp_path: Path, monkeypatch):
+        f = tmp_path / "syns.json"
+        f.write_text(json.dumps([["btc", "bitcoin"]]))
+        monkeypatch.setattr("app.matching.synonyms.SYNONYMS_PATH", f)
+        result = expand_synonyms("oil prices")
+        assert result == "oil prices"
 
 
-class TestGetBuiltinSynonymGroups:
-    def test_returns_groups(self):
-        groups = get_builtin_synonym_groups()
+class TestDefaultConfig:
+    """Verify the shipped config/custom_synonyms.json has expected content."""
+
+    def test_config_file_exists(self):
+        assert SYNONYMS_PATH.exists(), f"Synonyms config not found at {SYNONYMS_PATH}"
+
+    def test_config_is_valid_json(self):
+        groups = json.loads(SYNONYMS_PATH.read_text())
+        assert isinstance(groups, list)
         assert len(groups) > 0
-        # Each group should have at least 2 members
-        for group in groups:
-            assert len(group) >= 2
 
-    def test_covers_all_builtin_words(self):
-        groups = get_builtin_synonym_groups()
-        all_words = {w for group in groups for w in group}
-        for word in SYNONYMS:
-            assert word in all_words
+    def test_each_group_has_at_least_two_words(self):
+        groups = json.loads(SYNONYMS_PATH.read_text())
+        for group in groups:
+            assert len(group) >= 2, f"Group too small: {group}"
+
+    def test_known_synonyms_present(self):
+        """Verify key synonym pairs are in the config."""
+        syns = _groups_to_dict(json.loads(SYNONYMS_PATH.read_text()))
+        assert "bitcoin" in syns.get("btc", [])
+        assert "ethereum" in syns.get("eth", [])
+        assert "fomc" in syns.get("fed", []) or "fed" in syns.get("fomc", [])
+        assert "artificial intelligence" in syns.get("ai", [])
 
 
 # ---------------------------------------------------------------------------
@@ -127,10 +136,10 @@ class TestGetBuiltinSynonymGroups:
 
 @pytest_asyncio.fixture
 async def api_client(tmp_path: Path, monkeypatch):
-    """AsyncClient hitting the real app, with custom synonyms in a temp file."""
+    """AsyncClient hitting the real app, with synonyms in a temp file."""
     syn_file = tmp_path / "custom_synonyms.json"
     syn_file.write_text("[]")
-    monkeypatch.setattr("app.matching.synonyms.CUSTOM_SYNONYMS_PATH", syn_file)
+    monkeypatch.setattr("app.matching.synonyms.SYNONYMS_PATH", syn_file)
 
     from app.main import app
 
@@ -145,8 +154,7 @@ class TestSynonymsCRUD:
         resp = await api_client.get("/api/v1/synonyms")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["custom"] == []
-        assert len(data["builtin"]) > 0
+        assert data["groups"] == []
 
     @pytest.mark.asyncio
     async def test_add_group(self, api_client: AsyncClient):
@@ -156,8 +164,8 @@ class TestSynonymsCRUD:
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert len(data["custom"]) == 1
-        assert data["custom"][0] == ["crude", "wti", "west texas intermediate"]
+        assert len(data["groups"]) == 1
+        assert data["groups"][0] == ["crude", "wti", "west texas intermediate"]
 
     @pytest.mark.asyncio
     async def test_add_rejects_single_word(self, api_client: AsyncClient):
@@ -176,7 +184,7 @@ class TestSynonymsCRUD:
 
         # List
         resp = await api_client.get("/api/v1/synonyms")
-        assert len(resp.json()["custom"]) == 1
+        assert len(resp.json()["groups"]) == 1
 
         # Update
         resp = await api_client.put(
@@ -184,12 +192,12 @@ class TestSynonymsCRUD:
             json={"words": ["oil", "petroleum", "crude oil"]},
         )
         assert resp.status_code == 200
-        assert resp.json()["custom"][0] == ["oil", "petroleum", "crude oil"]
+        assert resp.json()["groups"][0] == ["oil", "petroleum", "crude oil"]
 
         # Delete
         resp = await api_client.delete("/api/v1/synonyms/0")
         assert resp.status_code == 200
-        assert resp.json()["custom"] == []
+        assert resp.json()["groups"] == []
 
     @pytest.mark.asyncio
     async def test_update_invalid_index(self, api_client: AsyncClient):
@@ -209,4 +217,4 @@ class TestSynonymsCRUD:
             "/api/v1/synonyms", json={"words": [" Crude ", " WTI "]}
         )
         assert resp.status_code == 201
-        assert resp.json()["custom"][0] == ["crude", "wti"]
+        assert resp.json()["groups"][0] == ["crude", "wti"]
