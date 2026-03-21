@@ -54,10 +54,20 @@ class SearchService:
         if filters:
             stmt = stmt.where(and_(*filters))
 
-        stmt = stmt.order_by(desc("rank")).limit(limit)
+        stmt = stmt.order_by(desc("rank"))
 
-        result = await self._db.execute(stmt)
-        rows = result.all()
+        if platform:
+            # Single platform — no balancing needed
+            stmt = stmt.limit(limit)
+            result = await self._db.execute(stmt)
+            rows = result.all()
+        else:
+            # Fetch extra, then balance across platforms so no single platform
+            # dominates the results
+            stmt = stmt.limit(limit * 3)
+            result = await self._db.execute(stmt)
+            all_rows = result.all()
+            rows = self._balance_platforms(all_rows, limit)
 
         if len(rows) < limit:
             like_pattern = f"%{query.lower()}%"
@@ -161,6 +171,39 @@ class SearchService:
         if end_date_max is not None:
             filters.append(UnifiedMarket.end_date <= end_date_max)
         return filters
+
+    @staticmethod
+    def _balance_platforms(rows: list, limit: int) -> list:
+        """Ensure each platform gets fair representation in results.
+
+        Takes top limit/num_platforms per platform, then fills remaining
+        slots with the next highest-ranked results from any platform.
+        """
+        by_platform: dict[str, list] = {}
+        for row in rows:
+            slug = row[2]  # Platform.slug
+            by_platform.setdefault(slug, []).append(row)
+
+        if len(by_platform) <= 1:
+            return rows[:limit]
+
+        per_platform = max(limit // len(by_platform), 1)
+        balanced: list = []
+        for platform_rows in by_platform.values():
+            balanced.extend(platform_rows[:per_platform])
+
+        # Fill remaining slots with next-best from any platform
+        seen_ids = {row[0].id for row in balanced}
+        for row in rows:
+            if len(balanced) >= limit:
+                break
+            if row[0].id not in seen_ids:
+                balanced.append(row)
+                seen_ids.add(row[0].id)
+
+        # Sort by rank descending
+        balanced.sort(key=lambda r: r[3], reverse=True)
+        return balanced[:limit]
 
     @staticmethod
     def _build_exclude_filter(ts_vector, exclude_q: str):
