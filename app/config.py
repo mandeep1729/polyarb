@@ -28,7 +28,14 @@ class Settings(BaseSettings):
     BACKFILL_TOP_N_MARKETS: int = 1000
     SQL_ECHO: bool = True
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    QDRANT_ENDPOINT: str = "http://localhost:6333"
+    QDRANT_API_KEY: str | None = None
+    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_DIMENSION: int = 384
+    QDRANT_COLLECTION: str = "market_embeddings"
+    EMBEDDING_MATCH_THRESHOLD: float = 0.75
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()
