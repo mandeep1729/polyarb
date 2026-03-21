@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
-from sqlalchemy import Float, and_, case, cast, desc, func, select
+from sqlalchemy import Float, Select, and_, case, cast, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.categories import resolve_category
@@ -35,6 +35,41 @@ SORT_COLUMNS = {
     "created_at": MarketGroup.created_at,
 }
 
+_TAG_NOISE_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "config" / "tag_noise.json"
+)
+_TAG_NOISE: frozenset[str] = frozenset(json.loads(_TAG_NOISE_PATH.read_text()))
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+_TIME_RE = re.compile(r"^\d{1,2}[ap]m$")
+_ORDINAL_RE = re.compile(r"^\d+(?:st|nd|rd|th)$")
+_MONEY_SIZE_RE = re.compile(r"^\d+[bkmt]{1,2}$")
+_BASIS_POINTS_RE = re.compile(r"^\d+bps?$")
+_TEMPERATURE_RE = re.compile(r"^\d+[°ºc]+$")
+
+_NUMERIC_NOISE_PATTERNS = (_TIME_RE, _ORDINAL_RE, _MONEY_SIZE_RE, _BASIS_POINTS_RE, _TEMPERATURE_RE)
+
+
+def extract_word_counts(questions: list[str]) -> Counter[str]:
+    """Extract word frequency counts from a list of market question texts."""
+    from app.matching.text import STOP_WORDS, _PUNCTUATION_RE
+
+    counter: Counter[str] = Counter()
+    for q in questions:
+        if not q:
+            continue
+        text = _PUNCTUATION_RE.sub(" ", q.lower())
+        for word in text.split():
+            if (
+                len(word) > 2
+                and word not in STOP_WORDS
+                and word not in _TAG_NOISE
+                and not word.isdigit()
+                and not _YEAR_RE.match(word)
+                and not any(p.match(word) for p in _NUMERIC_NOISE_PATTERNS)
+            ):
+                counter[word] += 1
+    return counter
+
 
 class GroupService:
     """Query market groups, their members, and historical consensus data."""
@@ -45,7 +80,7 @@ class GroupService:
     @staticmethod
     def _end_date_subquery(
         end_date_min: str | None, end_date_max: str | None,
-    ) -> select | None:
+    ) -> Select | None:
         """Build a subquery filtering groups by member end_date range."""
         if end_date_min is None and end_date_max is None:
             return None
@@ -66,6 +101,7 @@ class GroupService:
         sort_by: str = "liquidity",
         end_date_min: str | None = None,
         end_date_max: str | None = None,
+        exclude_expired: bool = True,
         limit: int = 20,
         cursor: str | None = None,
     ) -> PaginatedResponse[GroupResponse]:
@@ -82,6 +118,16 @@ class GroupService:
                 filters.append(MarketGroup.category == db_cat)
             else:
                 filters.append(MarketGroup.category == category)
+        if exclude_expired:
+            now = datetime.now(timezone.utc)
+            active_subq = (
+                select(MarketGroupMember.group_id)
+                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+                .where(
+                    (UnifiedMarket.end_date >= now) | (UnifiedMarket.end_date.is_(None))
+                )
+            )
+            filters.append(MarketGroup.id.in_(active_subq))
         member_subq = self._end_date_subquery(end_date_min, end_date_max)
         if member_subq is not None:
             filters.append(MarketGroup.id.in_(member_subq))
@@ -117,6 +163,7 @@ class GroupService:
         sort_by: str = "liquidity",
         end_date_min: str | None = None,
         end_date_max: str | None = None,
+        exclude_expired: bool = True,
         limit: int = 20,
     ) -> PaginatedResponse[GroupResponse]:
         """Full-text search on group canonical_question with ILIKE fallback."""
@@ -137,6 +184,16 @@ class GroupService:
 
         if db_cat:
             stmt = stmt.where(MarketGroup.category == db_cat)
+        if exclude_expired:
+            now = datetime.now(timezone.utc)
+            active_subq = (
+                select(MarketGroupMember.group_id)
+                .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+                .where(
+                    (UnifiedMarket.end_date >= now) | (UnifiedMarket.end_date.is_(None))
+                )
+            )
+            stmt = stmt.where(MarketGroup.id.in_(active_subq))
         member_subq = self._end_date_subquery(end_date_min, end_date_max)
         if member_subq is not None:
             stmt = stmt.where(MarketGroup.id.in_(member_subq))
@@ -196,43 +253,15 @@ class GroupService:
             for row in result.all()
         ]
 
-    _TAG_NOISE_PATH = (
-        Path(__file__).resolve().parent.parent.parent
-        / "config"
-        / "tag_noise.json"
-    )
-    _TAG_NOISE: frozenset[str] = frozenset(
-        json.loads(_TAG_NOISE_PATH.read_text())
-    )
-
-    _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
-
     async def get_tags(self, limit: int = 50) -> list[dict]:
         """Return most frequent terms from active market questions."""
-        from app.matching.text import STOP_WORDS, _PUNCTUATION_RE
-
         result = await self._db.execute(
             select(UnifiedMarket.question).where(
                 UnifiedMarket.is_active.is_(True),
             )
         )
         questions = result.scalars().all()
-
-        counter: Counter[str] = Counter()
-        for q in questions:
-            if not q:
-                continue
-            text = _PUNCTUATION_RE.sub(" ", q.lower())
-            for word in text.split():
-                if (
-                    len(word) > 2
-                    and word not in STOP_WORDS
-                    and word not in self._TAG_NOISE
-                    and not word.isdigit()
-                    and not self._YEAR_RE.match(word)
-                ):
-                    counter[word] += 1
-
+        counter = extract_word_counts(questions)
         return [
             {"term": term, "count": count}
             for term, count in counter.most_common(limit)

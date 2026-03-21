@@ -11,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.admin import router as admin_router
 from app.api.arbitrage import router as arbitrage_router
 from app.api.groups import router as groups_router
 from app.api.synonyms import router as synonyms_router
@@ -95,6 +96,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(markets_router, prefix="/api/v1")
 app.include_router(arbitrage_router, prefix="/api/v1")

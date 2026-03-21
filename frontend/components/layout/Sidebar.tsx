@@ -7,6 +7,7 @@ import {
   BarChart3,
   GitCompareArrows,
   Settings,
+  Shield,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
   { href: '/', label: 'Groups', icon: Layers },
   { href: '/markets', label: 'Markets', icon: BarChart3 },
   { href: '/arbitrage', label: 'Arbitrage', icon: GitCompareArrows },
+  { href: '/admin', label: 'Admin', icon: Shield },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 

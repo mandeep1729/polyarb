@@ -57,6 +57,7 @@ export interface MarketFilters {
   sort?: string;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_expired?: boolean;
   cursor?: string;
   limit?: number;
 }
@@ -136,6 +137,7 @@ export interface GroupFilters {
   sort_by?: string;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_expired?: boolean;
   cursor?: string;
   limit?: number;
 }
@@ -166,6 +168,7 @@ export interface GroupSearchFilters {
   sort_by?: string;
   end_date_min?: string;
   end_date_max?: string;
+  exclude_expired?: boolean;
   limit?: number;
 }
 
@@ -255,4 +258,34 @@ export interface GroupingStatus {
 
 export async function getGroupingStatus(): Promise<GroupingStatus> {
   return fetcher<GroupingStatus>('/groups/status');
+}
+
+// --- Admin ---
+
+export interface AdminStats {
+  timestamp: string;
+  platform_stats: { slug: string; name: string; total: number; expired: number; active: number }[];
+  sync_health: Record<string, string | null>;
+  freshness: { last_1h: number; last_6h: number; last_24h: number; older: number };
+  data_quality: { pct_end_date: number; pct_categorized: number; pct_price_history: number };
+  price_coverage: { zero: number; '1_to_10': number; '11_to_100': number; '100_plus': number };
+  top_markets: { id: number; question: string; platform: string; snapshot_count: number; earliest: string | null; latest: string | null }[];
+  task_status: Record<string, { last_run: string; status: string; duration_seconds: number; interval_seconds: number; error: string | null }>;
+  arbitrage: { total_pairs: number; arb_pairs: number; avg_spread: number; best_spread: number };
+  grouping: { total_active: number; cross_platform: number; cross_platform_pct: number; avg_members: number; high_disagreement: number };
+  tags: Record<string, string | number>[];
+  platform_slugs: string[];
+}
+
+export async function getAdminStats(): Promise<AdminStats> {
+  return fetcher<AdminStats>('/admin/stats');
+}
+
+export async function searchAdminTags(
+  q: string,
+  limit: number = 10
+): Promise<Record<string, string | number>[]> {
+  return fetcher<Record<string, string | number>[]>(
+    `/admin/tags/search${qs({ q, limit })}`
+  );
 }

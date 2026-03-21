@@ -32,6 +32,7 @@ async def list_groups(
     sort_by: str = Query(default="liquidity", pattern="^(disagreement|volume|liquidity|consensus|created_at)$"),
     end_date_min: str | None = Query(None, description="Groups with members expiring on or after this date (YYYY-MM-DD)"),
     end_date_max: str | None = Query(None, description="Groups with members expiring on or before this date (YYYY-MM-DD)"),
+    exclude_expired: bool = Query(True, description="Hide groups whose members have all expired"),
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_session),
@@ -39,7 +40,8 @@ async def list_groups(
     """List active market groups with pagination."""
     service = GroupService(db)
     return await service.get_groups(
-        category=category, sort_by=sort_by, end_date_min=end_date_min, end_date_max=end_date_max, limit=limit, cursor=cursor
+        category=category, sort_by=sort_by, end_date_min=end_date_min, end_date_max=end_date_max,
+        exclude_expired=exclude_expired, limit=limit, cursor=cursor,
     )
 
 
@@ -50,13 +52,15 @@ async def search_groups(
     sort_by: str = Query(default="liquidity", pattern="^(disagreement|volume|liquidity|consensus|created_at)$"),
     end_date_min: str | None = Query(None, description="Groups with members expiring on or after this date (YYYY-MM-DD)"),
     end_date_max: str | None = Query(None, description="Groups with members expiring on or before this date (YYYY-MM-DD)"),
+    exclude_expired: bool = Query(True, description="Hide groups whose members have all expired"),
     limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_session),
 ) -> GroupListResponse:
     """Search groups by canonical question text."""
     service = GroupService(db)
     return await service.search_groups(
-        query=q, category=category, sort_by=sort_by, end_date_min=end_date_min, end_date_max=end_date_max, limit=limit
+        query=q, category=category, sort_by=sort_by, end_date_min=end_date_min, end_date_max=end_date_max,
+        exclude_expired=exclude_expired, limit=limit,
     )
 
 
