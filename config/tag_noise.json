@@ -12,5 +12,5 @@
   "jan", "feb", "mar", "apr", "jun", "jul", "aug",
   "sep", "sept", "oct", "nov", "dec", "0am", "1am", "2am", "3am", "12pm",
   "1pm", "2pm", "3pm", "4pm", "5pm", "6pm", "30pm", "00pm", "00am",
-  "15pm", "30am", "EDT", "PST", "UTC", "say", "sol". "both"
+  "15pm", "30am", "EDT", "PST", "UTC", "say", "sol", "both"
 ]

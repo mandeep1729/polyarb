@@ -30,6 +30,33 @@ SORT_COLUMNS = {
     "created_at": MarketGroup.created_at,
 }
 
+_TAG_NOISE_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "config" / "tag_noise.json"
+)
+_TAG_NOISE: frozenset[str] = frozenset(json.loads(_TAG_NOISE_PATH.read_text()))
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+
+def extract_word_counts(questions: list[str]) -> Counter[str]:
+    """Extract word frequency counts from a list of market question texts."""
+    from app.matching.text import STOP_WORDS, _PUNCTUATION_RE
+
+    counter: Counter[str] = Counter()
+    for q in questions:
+        if not q:
+            continue
+        text = _PUNCTUATION_RE.sub(" ", q.lower())
+        for word in text.split():
+            if (
+                len(word) > 2
+                and word not in STOP_WORDS
+                and word not in _TAG_NOISE
+                and not word.isdigit()
+                and not _YEAR_RE.match(word)
+            ):
+                counter[word] += 1
+    return counter
+
 
 class GroupService:
     """Query market groups, their members, and historical consensus data."""
@@ -208,43 +235,15 @@ class GroupService:
             for row in result.all()
         ]
 
-    _TAG_NOISE_PATH = (
-        Path(__file__).resolve().parent.parent.parent
-        / "config"
-        / "tag_noise.json"
-    )
-    _TAG_NOISE: frozenset[str] = frozenset(
-        json.loads(_TAG_NOISE_PATH.read_text())
-    )
-
-    _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
-
     async def get_tags(self, limit: int = 50) -> list[dict]:
         """Return most frequent terms from active market questions."""
-        from app.matching.text import STOP_WORDS, _PUNCTUATION_RE
-
         result = await self._db.execute(
             select(UnifiedMarket.question).where(
                 UnifiedMarket.is_active.is_(True),
             )
         )
         questions = result.scalars().all()
-
-        counter: Counter[str] = Counter()
-        for q in questions:
-            if not q:
-                continue
-            text = _PUNCTUATION_RE.sub(" ", q.lower())
-            for word in text.split():
-                if (
-                    len(word) > 2
-                    and word not in STOP_WORDS
-                    and word not in self._TAG_NOISE
-                    and not word.isdigit()
-                    and not self._YEAR_RE.match(word)
-                ):
-                    counter[word] += 1
-
+        counter = extract_word_counts(questions)
         return [
             {"term": term, "count": count}
             for term, count in counter.most_common(limit)

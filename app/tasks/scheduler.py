@@ -10,6 +10,7 @@ from app.tasks.fetch_markets import fetch_all_markets
 from app.tasks.fetch_prices import fetch_active_prices
 from app.tasks.group_markets import run_full_grouping, run_mini_grouping
 from app.tasks.match_markets import run_matching
+from app.tasks.task_tracker import track_task
 
 logger = structlog.get_logger()
 
@@ -27,9 +28,17 @@ def create_scheduler() -> AsyncIOScheduler:
 
     now = datetime.now(timezone.utc)
 
+    tracked_fetch_markets = track_task("fetch_markets", settings.FETCH_MARKETS_INTERVAL_SECONDS)(fetch_all_markets)
+    tracked_fetch_prices = track_task("fetch_prices", settings.FETCH_PRICES_INTERVAL_SECONDS)(fetch_active_prices)
+    tracked_matching = track_task("match_markets", settings.MATCH_MARKETS_INTERVAL_SECONDS)(run_matching)
+    tracked_mini_grouping = track_task("group_markets_mini", settings.GROUP_MARKETS_INTERVAL_SECONDS)(run_mini_grouping)
+    tracked_full_grouping = track_task("group_markets_full", settings.GROUP_FULL_REGROUP_INTERVAL_SECONDS)(run_full_grouping)
+    tracked_deactivate = track_task("deactivate_expired", settings.CLEANUP_INTERVAL_SECONDS)(deactivate_expired_markets)
+    tracked_backfill = track_task("backfill_prices", settings.BACKFILL_PRICES_INTERVAL_SECONDS)(backfill_all_prices)
+
     # Market metadata sync: every 15 min (takes ~5 min to run)
     scheduler.add_job(
-        fetch_all_markets,
+        tracked_fetch_markets,
         "interval",
         seconds=settings.FETCH_MARKETS_INTERVAL_SECONDS,
         id="fetch_markets",
@@ -39,7 +48,7 @@ def create_scheduler() -> AsyncIOScheduler:
 
     # Hourly price fetch for all active markets (batched, ~5-10 min)
     scheduler.add_job(
-        fetch_active_prices,
+        tracked_fetch_prices,
         "interval",
         seconds=settings.FETCH_PRICES_INTERVAL_SECONDS,
         id="fetch_prices",
@@ -48,7 +57,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        run_matching,
+        tracked_matching,
         "interval",
         seconds=settings.MATCH_MARKETS_INTERVAL_SECONDS,
         id="match_markets",
@@ -57,7 +66,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        run_mini_grouping,
+        tracked_mini_grouping,
         "interval",
         seconds=settings.GROUP_MARKETS_INTERVAL_SECONDS,
         id="group_markets_mini",
@@ -66,7 +75,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        run_full_grouping,
+        tracked_full_grouping,
         "interval",
         seconds=settings.GROUP_FULL_REGROUP_INTERVAL_SECONDS,
         id="group_markets_full",
@@ -75,7 +84,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        deactivate_expired_markets,
+        tracked_deactivate,
         "interval",
         seconds=settings.CLEANUP_INTERVAL_SECONDS,
         id="deactivate_expired",
@@ -86,7 +95,7 @@ def create_scheduler() -> AsyncIOScheduler:
     # Backfill top 1000 markets with full history — daily, idempotent
     # Starts 30 min after boot to avoid competing with initial market sync + price fetch
     scheduler.add_job(
-        backfill_all_prices,
+        tracked_backfill,
         "interval",
         seconds=settings.BACKFILL_PRICES_INTERVAL_SECONDS,
         id="backfill_prices",
