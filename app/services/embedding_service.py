@@ -11,6 +11,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    PayloadSchemaType,
     PointStruct,
     VectorParams,
 )
@@ -59,6 +60,12 @@ def _ensure_collection(client: QdrantClient) -> None:
             ),
         )
         logger.info("qdrant_collection_created", name=settings.QDRANT_COLLECTION)
+    # Ensure payload index exists for filtered search
+    client.create_payload_index(
+        collection_name=settings.QDRANT_COLLECTION,
+        field_name="platform_id",
+        field_schema=PayloadSchemaType.INTEGER,
+    )
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
