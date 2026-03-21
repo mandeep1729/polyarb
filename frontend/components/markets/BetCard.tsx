@@ -9,7 +9,8 @@ import SparklineChart from './SparklineChart';
 import VolumeBar from './VolumeBar';
 import LiquidityIndicator from './LiquidityIndicator';
 import ExpiryCountdown from './ExpiryCountdown';
-import { ExternalLink, TrendingUp } from 'lucide-react';
+import BetCardDetail from './BetCardDetail';
+import { ExternalLink, TrendingUp, ChevronDown } from 'lucide-react';
 
 // DB category → display name
 const CATEGORY_DISPLAY: Record<string, string> = {
@@ -36,20 +37,25 @@ interface BetCardProps {
   market: Market;
   sparklineData?: PriceSnapshot[];
   arbSpread?: number | null;
+  expanded?: boolean;
+  onToggle?: () => void;
 }
 
-export default function BetCard({
+function CardContent({
   market,
   sparklineData,
   arbSpread,
-}: BetCardProps) {
-  const slug = market.id;
-
+  expanded,
+  expandable,
+}: {
+  market: Market;
+  sparklineData?: PriceSnapshot[];
+  arbSpread?: number | null;
+  expanded: boolean;
+  expandable: boolean;
+}) {
   return (
-    <Link
-      href={`/markets/${slug}`}
-      className="group block rounded-xl border border-gray-800 bg-gray-900 p-4 transition-all duration-200 hover:scale-[1.01] hover:border-gray-700"
-    >
+    <>
       {/* Header badges */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {market.category && (
@@ -69,55 +75,125 @@ export default function BetCard({
             {arbSpread.toFixed(1)}%
           </span>
         )}
-        <span className="ml-auto">
+        <span className="ml-auto flex items-center gap-1.5">
           <ExpiryCountdown endDate={market.end_date} />
+          {expandable && (
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 text-gray-500 transition-transform duration-200',
+                expanded && 'rotate-180'
+              )}
+            />
+          )}
         </span>
       </div>
 
       {/* Question */}
-      <h3 className="mb-3 line-clamp-2 text-sm font-semibold leading-snug text-gray-100 group-hover:text-white">
+      <h3
+        className={cn(
+          'mb-3 text-sm font-semibold leading-snug text-gray-100 group-hover:text-white',
+          !expanded && 'line-clamp-2'
+        )}
+      >
         {market.question}
       </h3>
 
-      {/* Outcomes & odds */}
-      <div className="mb-3 space-y-1.5">
-        {Object.entries(market.outcomes).map(([outcome, _]) => (
-          <div
-            key={outcome}
-            className="flex items-center justify-between rounded-lg bg-gray-800/60 px-3 py-1.5"
-          >
-            <span className="text-xs text-gray-300">{outcome}</span>
-            <OddsDisplay
-              probability={market.outcome_prices[outcome] ?? 0}
-              size="sm"
-            />
+      {/* Collapsed view: compact stats */}
+      {!expanded && (
+        <>
+          <div className="mb-3 space-y-1.5">
+            {Object.entries(market.outcomes).map(([outcome]) => (
+              <div
+                key={outcome}
+                className="flex items-center justify-between rounded-lg bg-gray-800/60 px-3 py-1.5"
+              >
+                <span className="text-xs text-gray-300">{outcome}</span>
+                <OddsDisplay
+                  probability={market.outcome_prices[outcome] ?? 0}
+                  size="sm"
+                />
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      {/* Sparkline + stats */}
-      <div className="mb-3 flex items-center justify-between">
-        <SparklineChart data={sparklineData ?? []} />
-        <LiquidityIndicator liquidity={market.liquidity} />
-      </div>
+          <div className="mb-3 flex items-center justify-between">
+            <SparklineChart data={sparklineData ?? []} />
+            <LiquidityIndicator liquidity={market.liquidity} />
+          </div>
 
-      {/* Volume */}
-      <VolumeBar volume={market.volume_24h} />
+          <VolumeBar volume={market.volume_24h} />
 
-      {/* Deep link */}
-      {market.deep_link_url && (
-        <div className="mt-2 flex justify-end">
-          <span
-            onClick={(e) => {
-              e.preventDefault();
-              window.open(market.deep_link_url!, '_blank');
-            }}
-            className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-300"
-          >
-            Trade <ExternalLink className="h-3 w-3" />
-          </span>
-        </div>
+          {market.deep_link_url && (
+            <div className="mt-2 flex justify-end">
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  window.open(market.deep_link_url!, '_blank');
+                }}
+                className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-300"
+              >
+                Trade <ExternalLink className="h-3 w-3" />
+              </span>
+            </div>
+          )}
+        </>
       )}
+
+      {/* Expanded view: full detail */}
+      {expanded && <BetCardDetail market={market} />}
+    </>
+  );
+}
+
+export default function BetCard({
+  market,
+  sparklineData,
+  arbSpread,
+  expanded = false,
+  onToggle,
+}: BetCardProps) {
+  const cardStyles = cn(
+    'group block rounded-xl border bg-gray-900 p-4 transition-all duration-200',
+    expanded
+      ? 'border-emerald-700/50 ring-1 ring-emerald-700/20'
+      : 'border-gray-800 hover:scale-[1.01] hover:border-gray-700'
+  );
+
+  const content = (
+    <CardContent
+      market={market}
+      sparklineData={sparklineData}
+      arbSpread={arbSpread}
+      expanded={expanded}
+      expandable={!!onToggle}
+    />
+  );
+
+  // When onToggle is provided, render as expandable div
+  if (onToggle) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        className={cn(cardStyles, 'cursor-pointer')}
+      >
+        {content}
+      </div>
+    );
+  }
+
+  // Default: render as Link to detail page
+  return (
+    <Link href={`/markets/${market.id}`} className={cardStyles}>
+      {content}
     </Link>
   );
 }

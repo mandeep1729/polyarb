@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { Market } from '@/lib/types';
 import { useMarkets } from '@/lib/queries/useMarkets';
 import { useSearch } from '@/lib/queries/useSearch';
@@ -51,6 +51,7 @@ export default function PlatformColumn({
   endDateMax,
   excludeExpired,
 }: PlatformColumnProps) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const style = platformStyles[slug] ?? defaultStyle;
 
   const filters: MarketFilters = {
@@ -136,7 +137,16 @@ export default function PlatformColumn({
         ) : (
           <div className="space-y-3">
             {markets.map((market) => (
-              <BetCard key={market.id} market={market} />
+              <BetCard
+                key={market.id}
+                market={market}
+                expanded={expandedId === market.id}
+                onToggle={() =>
+                  setExpandedId((prev) =>
+                    prev === market.id ? null : market.id
+                  )
+                }
+              />
             ))}
 
             {!isSearching && marketsQuery.hasNextPage && (
