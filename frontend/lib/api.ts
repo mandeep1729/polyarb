@@ -74,6 +74,9 @@ export interface ArbitrageFilters {
 export interface SearchFilters {
   category?: string;
   platform?: string;
+  exclude_expired?: boolean;
+  end_date_min?: string;
+  end_date_max?: string;
   limit?: number;
 }
 

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 
 import structlog
 from sqlalchemy import select
@@ -28,11 +29,16 @@ class LiveSearchService:
         query: str,
         category: str | None = None,
         platform: str | None = None,
+        exclude_expired: bool = True,
+        end_date_min: "datetime | None" = None,
+        end_date_max: "datetime | None" = None,
         limit: int = 20,
     ) -> list[MarketResponse]:
         # Fire local + upstream searches in parallel
         local_task = self._search_service.search(
-            query=query, category=category, platform=platform, limit=limit
+            query=query, category=category, platform=platform,
+            exclude_expired=exclude_expired, end_date_min=end_date_min,
+            end_date_max=end_date_max, limit=limit,
         )
         poly_task = asyncio.wait_for(
             self._search_polymarket(query, limit), timeout=UPSTREAM_TIMEOUT
@@ -96,6 +102,14 @@ class LiveSearchService:
             if key in seen:
                 continue
             if not normalized.get("platform_market_id") or not normalized.get("question"):
+                continue
+            # Apply expiry filters to upstream results
+            end_date = normalized.get("end_date")
+            if exclude_expired and end_date and end_date < datetime.now(end_date.tzinfo):
+                continue
+            if end_date_min and (not end_date or end_date < end_date_min):
+                continue
+            if end_date_max and (not end_date or end_date > end_date_max):
                 continue
             seen.add(key)
             new_markets.append((normalized, pid))

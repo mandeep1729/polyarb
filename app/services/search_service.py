@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +23,9 @@ class SearchService:
         query: str,
         category: str | None = None,
         platform: str | None = None,
+        exclude_expired: bool = True,
+        end_date_min: datetime | None = None,
+        end_date_max: datetime | None = None,
         limit: int = 20,
     ) -> list[MarketResponse]:
         or_query = build_tsquery(query)
@@ -45,6 +50,15 @@ class SearchService:
             filters.append(UnifiedMarket.category == cat_val)
         if platform:
             filters.append(Platform.slug == platform)
+        if exclude_expired:
+            now = datetime.now(timezone.utc)
+            filters.append(
+                (UnifiedMarket.end_date >= now) | (UnifiedMarket.end_date.is_(None))
+            )
+        if end_date_min is not None:
+            filters.append(UnifiedMarket.end_date >= end_date_min)
+        if end_date_max is not None:
+            filters.append(UnifiedMarket.end_date <= end_date_max)
         if filters:
             stmt = stmt.where(and_(*filters))
 
@@ -79,6 +93,15 @@ class SearchService:
                 fb_filters.append(UnifiedMarket.category == cat_val)
             if platform:
                 fb_filters.append(Platform.slug == platform)
+            if exclude_expired:
+                now = datetime.now(timezone.utc)
+                fb_filters.append(
+                    (UnifiedMarket.end_date >= now) | (UnifiedMarket.end_date.is_(None))
+                )
+            if end_date_min is not None:
+                fb_filters.append(UnifiedMarket.end_date >= end_date_min)
+            if end_date_max is not None:
+                fb_filters.append(UnifiedMarket.end_date <= end_date_max)
             if fb_filters:
                 fallback_stmt = fallback_stmt.where(and_(*fb_filters))
 

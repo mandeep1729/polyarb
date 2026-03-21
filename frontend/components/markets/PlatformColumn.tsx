@@ -67,6 +67,9 @@ export default function PlatformColumn({
   const searchResult = useSearch(searchQuery, {
     category,
     platform: slug,
+    exclude_expired: excludeExpired,
+    end_date_min: endDateMin,
+    end_date_max: endDateMax,
   });
 
   const isSearching = searchQuery.length >= 2;
