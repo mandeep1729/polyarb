@@ -232,8 +232,7 @@ export async function getMarketCategoryCounts(
 // --- Synonyms ---
 
 export interface SynonymsResponse {
-  custom: string[][];
-  builtin: string[][];
+  groups: string[][];
 }
 
 export async function getSynonyms(): Promise<SynonymsResponse> {
@@ -242,8 +241,8 @@ export async function getSynonyms(): Promise<SynonymsResponse> {
 
 export async function addSynonymGroup(
   words: string[]
-): Promise<{ custom: string[][] }> {
-  return fetcher<{ custom: string[][] }>('/synonyms', {
+): Promise<SynonymsResponse> {
+  return fetcher<SynonymsResponse>('/synonyms', {
     method: 'POST',
     body: JSON.stringify({ words }),
   });
@@ -252,8 +251,8 @@ export async function addSynonymGroup(
 export async function updateSynonymGroup(
   index: number,
   words: string[]
-): Promise<{ custom: string[][] }> {
-  return fetcher<{ custom: string[][] }>(`/synonyms/${index}`, {
+): Promise<SynonymsResponse> {
+  return fetcher<SynonymsResponse>(`/synonyms/${index}`, {
     method: 'PUT',
     body: JSON.stringify({ words }),
   });
@@ -261,8 +260,8 @@ export async function updateSynonymGroup(
 
 export async function deleteSynonymGroup(
   index: number
-): Promise<{ custom: string[][] }> {
-  return fetcher<{ custom: string[][] }>(`/synonyms/${index}`, {
+): Promise<SynonymsResponse> {
+  return fetcher<SynonymsResponse>(`/synonyms/${index}`, {
     method: 'DELETE',
   });
 }

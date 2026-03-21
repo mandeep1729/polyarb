@@ -5,7 +5,7 @@ import { useOddsFormat } from '@/lib/contexts/OddsFormatContext';
 import { useTheme } from '@/lib/contexts/ThemeContext';
 import type { OddsFormat } from '@/lib/types';
 import { cn } from '@/lib/utils/format';
-import { Sun, Moon, X, Plus, Pencil, Check, ChevronDown, ChevronRight, Search, RefreshCw, Loader2 } from 'lucide-react';
+import { Sun, Moon, X, Plus, Pencil, Check, Search, RefreshCw, Loader2 } from 'lucide-react';
 import {
   getSynonyms,
   addSynonymGroup,
@@ -39,7 +39,6 @@ function SynonymSection() {
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [editWords, setEditWords] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showBuiltin, setShowBuiltin] = useState(false);
 
   const loadSynonyms = useCallback(async () => {
     try {
@@ -68,7 +67,7 @@ function SynonymSection() {
       setAdding(true);
       setError(null);
       const result = await addSynonymGroup(words);
-      setSynonyms((prev) => prev ? { ...prev, custom: result.custom } : prev);
+      setSynonyms(result);
       setNewWords('');
     } catch {
       setError('Failed to add synonym group');
@@ -86,7 +85,7 @@ function SynonymSection() {
     try {
       setError(null);
       const result = await updateSynonymGroup(index, words);
-      setSynonyms((prev) => prev ? { ...prev, custom: result.custom } : prev);
+      setSynonyms(result);
       setEditIndex(null);
     } catch {
       setError('Failed to update synonym group');
@@ -97,28 +96,20 @@ function SynonymSection() {
     try {
       setError(null);
       const result = await deleteSynonymGroup(index);
-      setSynonyms((prev) => prev ? { ...prev, custom: result.custom } : prev);
+      setSynonyms(result);
     } catch {
       setError('Failed to delete synonym group');
     }
   };
 
-  const filterGroups = (groups: string[][]) => {
-    if (!searchQuery) return groups;
+  const filteredGroups = useMemo(() => {
+    if (!synonyms) return [];
+    if (!searchQuery) return synonyms.groups;
     const q = searchQuery.toLowerCase();
-    return groups.filter((group) =>
+    return synonyms.groups.filter((group) =>
       group.some((word) => word.toLowerCase().includes(q))
     );
-  };
-
-  const filteredCustom = useMemo(
-    () => (synonyms ? filterGroups(synonyms.custom) : []),
-    [synonyms, searchQuery]
-  );
-  const filteredBuiltin = useMemo(
-    () => (synonyms ? filterGroups(synonyms.builtin) : []),
-    [synonyms, searchQuery]
-  );
+  }, [synonyms, searchQuery]);
 
   if (loading) {
     return (
@@ -131,157 +122,132 @@ function SynonymSection() {
   }
 
   return (
-    <>
-      <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-        <h2 className="mb-1 text-sm font-semibold text-gray-200">
-          Word Equivalences
-        </h2>
-        <p className="mb-4 text-xs text-gray-500">
-          Custom synonym groups for cross-platform market matching.
-        </p>
+    <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
+      <h2 className="mb-1 text-sm font-semibold text-gray-200">
+        Word Equivalences
+      </h2>
+      <p className="mb-4 text-xs text-gray-500">
+        Synonym groups for cross-platform market matching and search.
+        All groups are editable.
+      </p>
 
-        {error && (
-          <div className="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
-            {error}
-          </div>
+      {error && (
+        <div className="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
+          {error}
+        </div>
+      )}
+
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+        <input
+          type="text"
+          placeholder="Filter synonyms..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-lg border border-gray-800 bg-gray-950 py-2 pl-9 pr-3 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
+        />
+      </div>
+
+      {/* Add form */}
+      <div className="mb-4 flex gap-2">
+        <input
+          type="text"
+          placeholder="crude, wti, west texas intermediate"
+          value={newWords}
+          onChange={(e) => setNewWords(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+          className="flex-1 rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
+        />
+        <button
+          onClick={handleAdd}
+          disabled={adding}
+          className="flex items-center gap-1.5 rounded-lg border border-emerald-700 bg-emerald-900/30 px-3 py-2 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-900/50 disabled:opacity-50"
+        >
+          {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+          Add
+        </button>
+      </div>
+
+      {/* Synonym groups */}
+      <div className="space-y-2">
+        {filteredGroups.length === 0 && !searchQuery && (
+          <p className="text-xs text-gray-600">No synonym groups configured.</p>
         )}
-
-        {/* Search */}
-        <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
-          <input
-            type="text"
-            placeholder="Filter synonyms..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-gray-800 bg-gray-950 py-2 pl-9 pr-3 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
-          />
-        </div>
-
-        {/* Add form */}
-        <div className="mb-4 flex gap-2">
-          <input
-            type="text"
-            placeholder="crude, wti, west texas intermediate"
-            value={newWords}
-            onChange={(e) => setNewWords(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-            className="flex-1 rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
-          />
-          <button
-            onClick={handleAdd}
-            disabled={adding}
-            className="flex items-center gap-1.5 rounded-lg border border-emerald-700 bg-emerald-900/30 px-3 py-2 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-900/50 disabled:opacity-50"
-          >
-            {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            Add
-          </button>
-        </div>
-
-        {/* Custom groups */}
-        <div className="space-y-2">
-          {filteredCustom.length === 0 && !searchQuery && (
-            <p className="text-xs text-gray-600">No custom synonym groups yet.</p>
-          )}
-          {filteredCustom.length === 0 && searchQuery && (
-            <p className="text-xs text-gray-600">No matches found.</p>
-          )}
-          {filteredCustom.map((group, displayIdx) => {
-            const realIndex = synonyms!.custom.indexOf(group);
-            const isEditing = editIndex === realIndex;
-            return (
-              <div
-                key={realIndex}
-                className="flex items-center gap-2 rounded-lg border border-gray-800 px-3 py-2"
-              >
-                {isEditing ? (
-                  <>
-                    <input
-                      type="text"
-                      value={editWords}
-                      onChange={(e) => setEditWords(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleUpdate(realIndex)}
-                      className="flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-gray-200 focus:border-emerald-600 focus:outline-none"
-                      autoFocus
-                    />
-                    <button
-                      onClick={() => handleUpdate(realIndex)}
-                      className="rounded p-1 text-emerald-400 hover:bg-gray-800"
-                    >
-                      <Check className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setEditIndex(null)}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-800"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex flex-1 flex-wrap gap-1.5">
-                      {group.map((word) => (
-                        <span
-                          key={word}
-                          className="rounded-md bg-gray-800 px-2 py-0.5 text-xs text-gray-300"
-                        >
-                          {word}
-                        </span>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => {
-                        setEditIndex(realIndex);
-                        setEditWords(group.join(', '));
-                      }}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(realIndex)}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-red-400"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Built-in synonyms (collapsed) */}
-        <div className="mt-5 border-t border-gray-800 pt-4">
-          <button
-            onClick={() => setShowBuiltin(!showBuiltin)}
-            className="flex items-center gap-1.5 text-xs font-medium text-gray-400 hover:text-gray-300"
-          >
-            {showBuiltin ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            Built-in Synonyms ({synonyms?.builtin.length ?? 0} groups)
-          </button>
-          {showBuiltin && (
-            <div className="mt-3 space-y-1.5">
-              {filteredBuiltin.map((group, i) => (
-                <div
-                  key={i}
-                  className="flex flex-wrap gap-1.5 rounded-lg border border-gray-800/50 bg-gray-950/50 px-3 py-2"
-                >
-                  {group.map((word) => (
-                    <span
-                      key={word}
-                      className="rounded-md bg-gray-800/60 px-2 py-0.5 text-xs text-gray-500"
-                    >
-                      {word}
-                    </span>
-                  ))}
-                </div>
-              ))}
+        {filteredGroups.length === 0 && searchQuery && (
+          <p className="text-xs text-gray-600">No matches found.</p>
+        )}
+        {filteredGroups.map((group) => {
+          const realIndex = synonyms!.groups.indexOf(group);
+          const isEditing = editIndex === realIndex;
+          return (
+            <div
+              key={realIndex}
+              className="flex items-center gap-2 rounded-lg border border-gray-800 px-3 py-2"
+            >
+              {isEditing ? (
+                <>
+                  <input
+                    type="text"
+                    value={editWords}
+                    onChange={(e) => setEditWords(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleUpdate(realIndex)}
+                    className="flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-gray-200 focus:border-emerald-600 focus:outline-none"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => handleUpdate(realIndex)}
+                    className="rounded p-1 text-emerald-400 hover:bg-gray-800"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setEditIndex(null)}
+                    className="rounded p-1 text-gray-500 hover:bg-gray-800"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-1 flex-wrap gap-1.5">
+                    {group.map((word) => (
+                      <span
+                        key={word}
+                        className="rounded-md bg-gray-800 px-2 py-0.5 text-xs text-gray-300"
+                      >
+                        {word}
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setEditIndex(realIndex);
+                      setEditWords(group.join(', '));
+                    }}
+                    className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(realIndex)}
+                    className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-red-400"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              )}
             </div>
-          )}
+          );
+        })}
+      </div>
+
+      {synonyms && (
+        <div className="mt-3 text-[11px] text-gray-600">
+          {synonyms.groups.length} synonym group{synonyms.groups.length !== 1 ? 's' : ''}
         </div>
-      </section>
-    </>
+      )}
+    </section>
   );
 }
 
@@ -307,19 +273,13 @@ function GroupingSection() {
       setRegroupState('loading');
       await triggerRegroup();
       setRegroupState('success');
-      // Refresh status after a delay to give grouping time to complete
       setTimeout(() => {
         loadStatus();
         setRegroupState('idle');
       }, 5000);
-    } catch (err: unknown) {
-      if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 409) {
-        setRegroupState('error');
-        setTimeout(() => setRegroupState('idle'), 3000);
-      } else {
-        setRegroupState('error');
-        setTimeout(() => setRegroupState('idle'), 3000);
-      }
+    } catch {
+      setRegroupState('error');
+      setTimeout(() => setRegroupState('idle'), 3000);
     }
   };
 
