@@ -9,8 +9,10 @@ import ExpiryFilter, { type DateRange } from '@/components/markets/ExpiryFilter'
 import UnifiedMarketList from '@/components/markets/UnifiedMarketList';
 import TagBar from '@/components/groups/TagCloud';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
+import PairBar from '@/components/markets/PairBar';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
-import { X, Search } from 'lucide-react';
+import type { Market } from '@/lib/types';
+import { X, Search, Link2 } from 'lucide-react';
 
 // Convert date-only strings to EST timestamps for inclusive range
 const startOfDay = (date: string) => `${date}T00:00:00-05:00`;
@@ -38,6 +40,28 @@ function MarketsContent() {
   const [category, setCategory] = useQueryState('category', { defaultValue: '' });
   const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
   const [showExpired, setShowExpired] = useState(false);
+  const [pairMode, setPairMode] = useState(false);
+  const [pairSelections, setPairSelections] = useState<Market[]>([]);
+
+  const pairSelectedIds = useMemo(
+    () => new Set(pairSelections.map((m) => m.id)),
+    [pairSelections]
+  );
+
+  const handlePairSelect = useCallback((market: Market) => {
+    setPairSelections((prev) => {
+      if (prev.some((m) => m.id === market.id)) {
+        return prev.filter((m) => m.id !== market.id);
+      }
+      if (prev.length >= 2) return prev;
+      return [...prev, market];
+    });
+  }, []);
+
+  const exitPairMode = useCallback(() => {
+    setPairMode(false);
+    setPairSelections([]);
+  }, []);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debouncedInput = useDebounce(searchInput, 200);
@@ -237,7 +261,19 @@ function MarketsContent() {
             )}
           </div>
 
-          {/* Right side: show expired toggle */}
+          {/* Right side: pair mode + show expired */}
+          <div className="flex items-center gap-3">
+          <button
+            onClick={() => pairMode ? exitPairMode() : setPairMode(true)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              pairMode
+                ? 'border-amber-600 bg-amber-900/20 text-amber-400'
+                : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'
+            }`}
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            {pairMode ? 'Exit pairing' : 'Pair markets'}
+          </button>
           <label className="flex cursor-pointer items-center gap-1.5">
             <div
               role="switch"
@@ -255,6 +291,7 @@ function MarketsContent() {
             </div>
             <span className="text-xs text-gray-400">Show expired</span>
           </label>
+          </div>
         </div>
 
         {/* Row 3: Active filter chips */}
@@ -338,9 +375,21 @@ function MarketsContent() {
             endDateMin={dateRange.min ? startOfDay(dateRange.min) : undefined}
             endDateMax={dateRange.max ? endOfDay(dateRange.max) : undefined}
             excludeExpired={!showExpired}
+            pairMode={pairMode}
+            selectedIds={pairSelectedIds}
+            onSelect={handlePairSelect}
           />
         </div>
       </ErrorBoundary>
+
+      {pairMode && (
+        <PairBar
+          selections={pairSelections}
+          onRemove={(id) => setPairSelections((prev) => prev.filter((m) => m.id !== id))}
+          onClear={exitPairMode}
+          onPaired={exitPairMode}
+        />
+      )}
     </div>
   );
 }

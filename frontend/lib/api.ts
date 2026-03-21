@@ -117,6 +117,16 @@ export async function getArbitrage(
   );
 }
 
+export async function createManualPair(
+  marketAId: number,
+  marketBId: number
+): Promise<{ id: number; market_a_id: number; market_b_id: number; odds_delta: number | null; match_method: string }> {
+  return fetcher('/arbitrage/pair', {
+    method: 'POST',
+    body: JSON.stringify({ market_a_id: marketAId, market_b_id: marketBId }),
+  });
+}
+
 export interface MarketTagFilters {
   q?: string;
   category?: string;

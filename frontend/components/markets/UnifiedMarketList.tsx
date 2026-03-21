@@ -17,6 +17,9 @@ interface UnifiedMarketListProps {
   endDateMin?: string;
   endDateMax?: string;
   excludeExpired?: boolean;
+  pairMode?: boolean;
+  selectedIds?: Set<number>;
+  onSelect?: (market: Market) => void;
 }
 
 /** Group markets by the date portion of end_date, sort groups chronologically, sort within groups by volume desc. */
@@ -59,6 +62,9 @@ export default function UnifiedMarketList({
   endDateMin,
   endDateMax,
   excludeExpired,
+  pairMode,
+  selectedIds,
+  onSelect,
 }: UnifiedMarketListProps) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
@@ -143,10 +149,12 @@ export default function UnifiedMarketList({
               <BetCard
                 key={market.id}
                 market={market}
-                expanded={expandedId === market.id}
-                onToggle={() =>
+                expanded={!pairMode && expandedId === market.id}
+                onToggle={pairMode ? undefined : () =>
                   setExpandedId((prev) => (prev === market.id ? null : market.id))
                 }
+                selected={pairMode && selectedIds?.has(market.id)}
+                onSelect={pairMode && onSelect ? () => onSelect(market) : undefined}
               />
             ))}
           </div>

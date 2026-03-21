@@ -39,6 +39,8 @@ interface BetCardProps {
   arbSpread?: number | null;
   expanded?: boolean;
   onToggle?: () => void;
+  selected?: boolean;
+  onSelect?: () => void;
 }
 
 function CardContent({
@@ -152,12 +154,16 @@ export default function BetCard({
   arbSpread,
   expanded = false,
   onToggle,
+  selected = false,
+  onSelect,
 }: BetCardProps) {
   const cardStyles = cn(
     'group block rounded-xl border bg-gray-900 p-4 transition-all duration-200',
-    expanded
-      ? 'border-emerald-700/50 ring-1 ring-emerald-700/20'
-      : 'border-gray-800 hover:scale-[1.01] hover:border-gray-700'
+    selected
+      ? 'border-amber-500/70 ring-2 ring-amber-500/30'
+      : expanded
+        ? 'border-emerald-700/50 ring-1 ring-emerald-700/20'
+        : 'border-gray-800 hover:scale-[1.01] hover:border-gray-700'
   );
 
   const content = (
@@ -166,9 +172,29 @@ export default function BetCard({
       sparklineData={sparklineData}
       arbSpread={arbSpread}
       expanded={expanded}
-      expandable={!!onToggle}
+      expandable={!!onToggle && !onSelect}
     />
   );
+
+  // Pair selection mode takes priority
+  if (onSelect) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
+        className={cn(cardStyles, 'cursor-pointer')}
+      >
+        {content}
+      </div>
+    );
+  }
 
   // When onToggle is provided, render as expandable div
   if (onToggle) {
