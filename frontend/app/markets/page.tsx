@@ -6,20 +6,14 @@ import { useQueryState } from 'nuqs';
 import { useQuery } from '@tanstack/react-query';
 import { searchAdminTags, getMarketTags } from '@/lib/api';
 import ExpiryFilter, { type DateRange } from '@/components/markets/ExpiryFilter';
-import SortSelect from '@/components/markets/SortSelect';
-import PlatformColumn from '@/components/markets/PlatformColumn';
+import UnifiedMarketList from '@/components/markets/UnifiedMarketList';
 import TagBar from '@/components/groups/TagCloud';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
 import { X, Search } from 'lucide-react';
 
 // Convert date-only string to end-of-day for inclusive range
-const endOfDay = (date: string) => `${date}T23:59:59`;
-
-const PLATFORMS = [
-  { slug: 'polymarket', label: 'Polymarket' },
-  { slug: 'kalshi', label: 'Kalshi' },
-];
+const endOfDay = (date: string) => `${date}T23:59:59-04:00`;
 
 function useDebounce(value: string, delay: number): string {
   const [debounced, setDebounced] = useState(value);
@@ -41,7 +35,6 @@ function MarketsContent() {
   const [includedTags, setIncludedTags] = useState<Set<string>>(new Set());
   const [excludedTags, setExcludedTags] = useState<Set<string>>(new Set());
   const [category, setCategory] = useQueryState('category', { defaultValue: '' });
-  const [sort] = useQueryState('sort', { defaultValue: 'volume_24h' });
   const [dateRange, setDateRange] = useState<DateRange>({ min: '', max: '' });
   const [showExpired, setShowExpired] = useState(false);
 
@@ -49,7 +42,6 @@ function MarketsContent() {
   const debouncedInput = useDebounce(searchInput, 200);
 
   const resolvedCategory = category || undefined;
-  const resolvedSort = sort ?? 'volume_24h';
 
   // Close suggestions on outside click
   useEffect(() => {
@@ -182,7 +174,7 @@ function MarketsContent() {
           </p>
         </div>
 
-        {/* Row 2: Search + Show expired toggle + Sort */}
+        {/* Row 2: Search + Show expired toggle */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           {/* Search with autocomplete */}
           <div ref={wrapperRef} className="relative sm:max-w-sm sm:flex-1">
@@ -244,27 +236,24 @@ function MarketsContent() {
             )}
           </div>
 
-          {/* Right side: show expired toggle + sort */}
-          <div className="flex items-center gap-3">
-            <label className="flex cursor-pointer items-center gap-1.5">
-              <div
-                role="switch"
-                aria-checked={showExpired}
-                onClick={() => setShowExpired(!showExpired)}
-                className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
-                  showExpired ? 'bg-emerald-600' : 'bg-gray-700'
+          {/* Right side: show expired toggle */}
+          <label className="flex cursor-pointer items-center gap-1.5">
+            <div
+              role="switch"
+              aria-checked={showExpired}
+              onClick={() => setShowExpired(!showExpired)}
+              className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                showExpired ? 'bg-emerald-600' : 'bg-gray-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                  showExpired ? 'translate-x-3.5' : 'translate-x-0.5'
                 }`}
-              >
-                <span
-                  className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
-                    showExpired ? 'translate-x-3.5' : 'translate-x-0.5'
-                  }`}
-                />
-              </div>
-              <span className="text-xs text-gray-400">Show expired</span>
-            </label>
-            <SortSelect />
-          </div>
+              />
+            </div>
+            <span className="text-xs text-gray-400">Show expired</span>
+          </label>
         </div>
 
         {/* Row 3: Active filter chips */}
@@ -338,23 +327,17 @@ function MarketsContent() {
         <ExpiryFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      {/* Split columns - fill remaining height */}
+      {/* Unified market list grouped by expiry */}
       <ErrorBoundary>
-        <div className="flex min-h-0 flex-1 gap-4 px-4 pb-4">
-          {PLATFORMS.map((p) => (
-            <PlatformColumn
-              key={p.slug}
-              slug={p.slug}
-              label={p.label}
-              searchQuery={combinedQuery}
-              excludeQuery={excludeQuery}
-              category={resolvedCategory}
-              sort={resolvedSort}
-              endDateMin={dateRange.min || undefined}
-              endDateMax={dateRange.max ? endOfDay(dateRange.max) : undefined}
-              excludeExpired={!showExpired}
-            />
-          ))}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+          <UnifiedMarketList
+            searchQuery={combinedQuery}
+            excludeQuery={excludeQuery}
+            category={resolvedCategory}
+            endDateMin={dateRange.min || undefined}
+            endDateMax={dateRange.max ? endOfDay(dateRange.max) : undefined}
+            excludeExpired={!showExpired}
+          />
         </div>
       </ErrorBoundary>
     </div>
