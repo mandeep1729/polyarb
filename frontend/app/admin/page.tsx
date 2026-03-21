@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getAdminStats, type AdminStats } from '@/lib/api';
 import { cn } from '@/lib/utils/format';
-import { Search, AlertCircle } from 'lucide-react';
+import { Search, AlertCircle, X } from 'lucide-react';
 
 // --- Health indicator logic ---
 
@@ -239,28 +239,92 @@ function OverviewTab({ data }: { data: AdminStats }) {
 
 // --- Tags Tab ---
 
+const DEFAULT_TAG_COUNT = 100;
+
 function TagsTab({ data }: { data: AdminStats }) {
   const [search, setSearch] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const filtered = useMemo(() => {
-    if (!search) return data.tags;
+  // Close suggestions on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // Autocomplete suggestions: show when 3+ chars typed
+  const suggestions = useMemo(() => {
+    if (search.length < 3) return [];
     const q = search.toLowerCase();
-    return data.tags.filter((t) => String(t.term).toLowerCase().includes(q));
+    return data.tags
+      .filter((t) => String(t.term).toLowerCase().includes(q))
+      .slice(0, 10);
   }, [data.tags, search]);
+
+  // Table data: if searching, show all matches; otherwise top 100
+  const tableData = useMemo(() => {
+    if (search) {
+      const q = search.toLowerCase();
+      return data.tags.filter((t) => String(t.term).toLowerCase().includes(q));
+    }
+    return data.tags.slice(0, DEFAULT_TAG_COUNT);
+  }, [data.tags, search]);
+
+  const selectSuggestion = (term: string) => {
+    setSearch(term);
+    setShowSuggestions(false);
+  };
 
   return (
     <div className="space-y-3">
-      <div className="relative max-w-sm">
+      {/* Search with autocomplete */}
+      <div ref={wrapperRef} className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
         <input
+          ref={inputRef}
           type="text"
-          placeholder="Filter tags..."
+          placeholder="Search tags (3+ chars for suggestions)..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded-lg border border-gray-800 bg-gray-900 py-2 pl-9 pr-3 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setShowSuggestions(e.target.value.length >= 3);
+          }}
+          onFocus={() => { if (search.length >= 3) setShowSuggestions(true); }}
+          className="w-full rounded-lg border border-gray-800 bg-gray-900 py-2 pl-9 pr-8 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-600 focus:outline-none"
         />
+        {search && (
+          <button
+            onClick={() => { setSearch(''); setShowSuggestions(false); }}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+
+        {/* Autocomplete dropdown */}
+        {showSuggestions && suggestions.length > 0 && (
+          <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-lg">
+            {suggestions.map((s) => (
+              <button
+                key={String(s.term)}
+                onClick={() => selectSuggestion(String(s.term))}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800"
+              >
+                <span>{String(s.term)}</span>
+                <span className="text-xs text-gray-600">{Number(s.total).toLocaleString()}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
+      {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-gray-800">
         <table className="w-full text-xs">
           <thead className="bg-gray-900 text-gray-500">
@@ -273,7 +337,7 @@ function TagsTab({ data }: { data: AdminStats }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
-            {filtered.map((tag) => (
+            {tableData.map((tag) => (
               <tr key={String(tag.term)} className="text-gray-300">
                 <td className="px-3 py-2 font-medium">{String(tag.term)}</td>
                 <td className="px-3 py-2 text-right font-mono">{Number(tag.total).toLocaleString()}</td>
@@ -288,7 +352,11 @@ function TagsTab({ data }: { data: AdminStats }) {
         </table>
       </div>
 
-      <p className="text-xs text-gray-600">{filtered.length} tags shown (top 200 by frequency)</p>
+      <p className="text-xs text-gray-600">
+        {search
+          ? `${tableData.length} matches`
+          : `Showing top ${Math.min(DEFAULT_TAG_COUNT, data.tags.length)} of ${data.tags.length} tags`}
+      </p>
     </div>
   );
 }
