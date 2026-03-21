@@ -1,10 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.categories import resolve_category
+from app.models.market import UnifiedMarket
+from app.models.platform import Platform
 from app.schemas.common import MarketStatus, SortField
 from app.schemas.market import (
     MarketListResponse,
@@ -12,7 +16,9 @@ from app.schemas.market import (
     PriceSnapshotResponse,
     TrendingMarketResponse,
 )
+from app.services.group_service import extract_word_counts
 from app.services.market_service import MarketService
+from app.services.search_utils import build_tsquery
 
 logger = structlog.get_logger()
 
@@ -54,6 +60,69 @@ async def market_category_counts(
     """Return category counts for markets."""
     service = MarketService(db)
     return await service.get_category_counts(platform=platform)
+
+
+@router.get("/tags")
+async def market_tags(
+    q: str | None = Query(None, min_length=2, max_length=200, description="Search query"),
+    category: str | None = Query(None, description="Filter by category"),
+    platform: str | None = Query(None, description="Filter by platform slug"),
+    exclude_expired: bool = Query(True, description="Hide expired markets"),
+    end_date_min: datetime | None = Query(None, description="Markets expiring on or after"),
+    end_date_max: datetime | None = Query(None, description="Markets expiring on or before"),
+    limit: int = Query(100, ge=1, le=200, description="Max tags to return"),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Return tag frequency counts computed from markets matching the given filters."""
+    has_filters = any([q, category, platform, end_date_min, end_date_max, not exclude_expired])
+
+    if not has_filters:
+        # No filters — use the admin tag cache for speed
+        from app.api.admin import _get_all_tags
+        all_tags, _ = await _get_all_tags(db)
+        return [t for t in all_tags if t["total"] > 1][:limit]
+
+    # Build filtered query for market questions
+    stmt = select(UnifiedMarket.question).join(
+        Platform, Platform.id == UnifiedMarket.platform_id
+    )
+
+    filters = []
+    if q:
+        or_query = build_tsquery(q)
+        ts_query = func.to_tsquery("english", or_query)
+        ts_vector = func.to_tsvector(
+            "english",
+            UnifiedMarket.question + " " + func.coalesce(UnifiedMarket.description, ""),
+        )
+        filters.append(ts_vector.bool_op("@@")(ts_query))
+    if category:
+        db_cat = resolve_category(category)
+        filters.append(UnifiedMarket.category == (db_cat or category))
+    if platform:
+        filters.append(Platform.slug == platform)
+    if exclude_expired:
+        now = datetime.now(timezone.utc)
+        filters.append(
+            (UnifiedMarket.end_date >= now) | (UnifiedMarket.end_date.is_(None))
+        )
+    if end_date_min is not None:
+        filters.append(UnifiedMarket.end_date >= end_date_min)
+    if end_date_max is not None:
+        filters.append(UnifiedMarket.end_date <= end_date_max)
+
+    if filters:
+        stmt = stmt.where(and_(*filters))
+
+    result = await db.execute(stmt)
+    questions = result.scalars().all()
+
+    counter = extract_word_counts(questions)
+    return [
+        {"term": term, "count": count}
+        for term, count in counter.most_common(limit)
+        if count > 1
+    ]
 
 
 @router.get("/trending", response_model=list[TrendingMarketResponse])

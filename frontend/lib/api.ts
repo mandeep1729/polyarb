@@ -116,6 +116,24 @@ export async function getArbitrage(
   );
 }
 
+export interface MarketTagFilters {
+  q?: string;
+  category?: string;
+  platform?: string;
+  exclude_expired?: boolean;
+  end_date_min?: string;
+  end_date_max?: string;
+  limit?: number;
+}
+
+export async function getMarketTags(
+  filters: MarketTagFilters = {}
+): Promise<{ term: string; count: number }[]> {
+  return fetcher<{ term: string; count: number }[]>(
+    `/markets/tags${qs(filters)}`
+  );
+}
+
 export async function searchMarkets(
   query: string,
   filters: SearchFilters = {}

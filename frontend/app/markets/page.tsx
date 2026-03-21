@@ -4,7 +4,7 @@ import { Suspense, useState, useMemo, useCallback, useRef, useEffect } from 'rea
 import { useSearchParams } from 'next/navigation';
 import { useQueryState } from 'nuqs';
 import { useQuery } from '@tanstack/react-query';
-import { searchAdminTags } from '@/lib/api';
+import { searchAdminTags, getMarketTags } from '@/lib/api';
 import CategoryFilter from '@/components/markets/CategoryFilter';
 import ExpiryFilter, { type DateRange } from '@/components/markets/ExpiryFilter';
 import SortSelect from '@/components/markets/SortSelect';
@@ -12,7 +12,6 @@ import PlatformColumn from '@/components/markets/PlatformColumn';
 import TagCloud from '@/components/groups/TagCloud';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import { useMarketCategoryCounts } from '@/lib/queries/useCategoryCounts';
-import { useGroupTags } from '@/lib/queries/useGroupTags';
 import { X, Search } from 'lucide-react';
 
 const PLATFORMS = [
@@ -98,7 +97,22 @@ function MarketsContent() {
   }, [searchTerms, selectedTags]);
 
   const { data: categoryCounts } = useMarketCategoryCounts();
-  const { data: tags } = useGroupTags(50);
+
+  // Dynamic tags: recomputed from filtered markets when filters change
+  const tagFilters = useMemo(() => ({
+    q: combinedQuery || undefined,
+    category: resolvedCategory,
+    exclude_expired: !showExpired,
+    end_date_min: dateRange.min || undefined,
+    end_date_max: dateRange.max || undefined,
+    limit: 100,
+  }), [combinedQuery, resolvedCategory, showExpired, dateRange]);
+
+  const { data: tags } = useQuery({
+    queryKey: ['marketTags', tagFilters],
+    queryFn: () => getMarketTags(tagFilters),
+    staleTime: 30_000,
+  });
 
   const countsRecord = useMemo(() => {
     if (!categoryCounts) return undefined;
