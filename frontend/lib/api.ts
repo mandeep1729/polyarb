@@ -127,6 +127,55 @@ export async function createManualPair(
   });
 }
 
+// --- Embedding Candidates ---
+
+export interface EmbeddingCandidate {
+  market_a_id: number;
+  market_a_question: string;
+  market_a_platform: string;
+  market_a_outcomes: Record<string, string>;
+  market_a_outcome_prices: Record<string, number>;
+  market_a_end_date: string | null;
+  market_a_category: string | null;
+  market_b_id: number;
+  market_b_question: string;
+  market_b_platform: string;
+  market_b_outcomes: Record<string, string>;
+  market_b_outcome_prices: Record<string, number>;
+  market_b_end_date: string | null;
+  market_b_category: string | null;
+  tfidf_score: number; // actually embedding cosine similarity
+}
+
+export async function getCandidates(): Promise<{ candidates: EmbeddingCandidate[]; stale: boolean }> {
+  return fetcher('/arbitrage/candidates');
+}
+
+export async function generateCandidates(threshold?: number): Promise<{ status: string }> {
+  return fetcher(`/arbitrage/candidates/generate${qs({ threshold })}`, { method: 'POST' });
+}
+
+export async function approveCandidate(
+  marketAId: number,
+  marketBId: number,
+  confidence?: number
+): Promise<{ id: number; odds_delta: number | null }> {
+  return fetcher('/arbitrage/candidates/approve', {
+    method: 'POST',
+    body: JSON.stringify({ market_a_id: marketAId, market_b_id: marketBId, confidence: confidence ?? 1.0 }),
+  });
+}
+
+export async function dismissCandidate(
+  marketAId: number,
+  marketBId: number
+): Promise<{ removed: number }> {
+  return fetcher('/arbitrage/candidates/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ market_a_id: marketAId, market_b_id: marketBId }),
+  });
+}
+
 export interface MarketTagFilters {
   q?: string;
   category?: string;

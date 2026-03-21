@@ -1,9 +1,13 @@
+import asyncio
+import json
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_redis_cache
+from app.cache import RedisCache
 from app.schemas.arbitrage import ArbitrageListResponse
 from app.services.arbitrage_service import ArbitrageService
 
@@ -107,3 +111,119 @@ async def import_verified_pairs(
         skipped=skipped,
     )
     return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+CANDIDATES_CACHE_KEY = "embedding_candidates"
+CANDIDATES_TTL = 86400  # 24 hours
+_generating = False
+
+
+@router.post("/candidates/generate")
+async def generate_candidates(
+    threshold: float = Query(0.85, ge=0.5, le=1.0),
+    db: AsyncSession = Depends(get_db),
+    cache: RedisCache = Depends(get_redis_cache),
+) -> dict:
+    """Trigger embedding candidate generation in the background."""
+    global _generating
+    if _generating:
+        raise HTTPException(status_code=409, detail="Generation already in progress")
+
+    async def _run() -> None:
+        global _generating
+        try:
+            from app.database import get_background_session_factory
+            from app.tasks.embed_candidates import find_embedding_candidates
+
+            async with get_background_session_factory()() as bg_db:
+                candidates = await find_embedding_candidates(bg_db, threshold=threshold)
+            await cache.set(CANDIDATES_CACHE_KEY, json.dumps(candidates), ttl=CANDIDATES_TTL)
+            logger.info("candidates_generated", count=len(candidates), threshold=threshold)
+        except Exception as exc:
+            logger.error("candidates_generation_failed", error=str(exc), exc_info=True)
+        finally:
+            _generating = False
+
+    _generating = True
+    asyncio.create_task(_run())
+    return {"status": "started", "threshold": threshold}
+
+
+@router.get("/candidates")
+async def list_candidates(
+    cache: RedisCache = Depends(get_redis_cache),
+) -> dict:
+    """Return cached embedding candidates."""
+    raw = await cache.get(CANDIDATES_CACHE_KEY)
+    if raw is None:
+        return {"candidates": [], "stale": True}
+    candidates = json.loads(raw)
+    return {"candidates": candidates, "stale": False}
+
+
+class ApproveCandidateInput(BaseModel):
+    """Approve a specific candidate by market IDs."""
+
+    market_a_id: int
+    market_b_id: int
+    confidence: float = 1.0
+
+
+@router.post("/candidates/approve", status_code=201)
+async def approve_candidate(
+    body: ApproveCandidateInput,
+    db: AsyncSession = Depends(get_db),
+    cache: RedisCache = Depends(get_redis_cache),
+) -> dict:
+    """Approve an embedding candidate — creates a verified pair and removes from cache."""
+    service = ArbitrageService(db)
+    try:
+        pair = await service.create_verified_pair(
+            market_a_id=body.market_a_id,
+            market_b_id=body.market_b_id,
+            confidence=body.confidence,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Remove approved candidate from cache
+    raw = await cache.get(CANDIDATES_CACHE_KEY)
+    if raw:
+        candidates = json.loads(raw)
+        candidates = [
+            c for c in candidates
+            if not (
+                {c["market_a_id"], c["market_b_id"]}
+                == {body.market_a_id, body.market_b_id}
+            )
+        ]
+        await cache.set(CANDIDATES_CACHE_KEY, json.dumps(candidates), ttl=CANDIDATES_TTL)
+
+    return {
+        "id": pair.id,
+        "market_a_id": pair.market_a_id,
+        "market_b_id": pair.market_b_id,
+        "odds_delta": pair.odds_delta,
+    }
+
+
+@router.post("/candidates/dismiss")
+async def dismiss_candidate(
+    body: ApproveCandidateInput,
+    cache: RedisCache = Depends(get_redis_cache),
+) -> dict:
+    """Dismiss a candidate — removes from cache without creating a pair."""
+    raw = await cache.get(CANDIDATES_CACHE_KEY)
+    if raw:
+        candidates = json.loads(raw)
+        before = len(candidates)
+        candidates = [
+            c for c in candidates
+            if not (
+                {c["market_a_id"], c["market_b_id"]}
+                == {body.market_a_id, body.market_b_id}
+            )
+        ]
+        await cache.set(CANDIDATES_CACHE_KEY, json.dumps(candidates), ttl=CANDIDATES_TTL)
+        return {"removed": before - len(candidates)}
+    return {"removed": 0}
