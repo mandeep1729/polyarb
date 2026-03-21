@@ -6,6 +6,7 @@ import {
   Layers,
   BarChart3,
   GitCompareArrows,
+  Link2,
   Settings,
   Shield,
   ChevronLeft,
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { href: '/', label: 'Groups', icon: Layers },
   { href: '/markets', label: 'Markets', icon: BarChart3 },
   { href: '/arbitrage', label: 'Arbitrage', icon: GitCompareArrows },
+  { href: '/matches', label: 'Matches', icon: Link2 },
   { href: '/admin', label: 'Admin', icon: Shield },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];

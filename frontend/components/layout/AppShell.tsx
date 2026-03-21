@@ -9,6 +9,7 @@ import {
   Layers,
   BarChart3,
   GitCompareArrows,
+  Link2,
   Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/format';
@@ -17,6 +18,7 @@ const MOBILE_NAV = [
   { href: '/', label: 'Groups', icon: Layers },
   { href: '/markets', label: 'Markets', icon: BarChart3 },
   { href: '/arbitrage', label: 'Arb', icon: GitCompareArrows },
+  { href: '/matches', label: 'Matches', icon: Link2 },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
