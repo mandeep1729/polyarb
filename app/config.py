@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     KALSHI_API_URL: str = "https://api.elections.kalshi.com/trade-api/v2"
 
-    CORS_ORIGINS: list[str] = ["http://localhost:3001"]
+    CORS_ORIGINS: list[str] = ["http://localhost:3001", "http://192.168.86.31:3001"]
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "/app/logs"
 
