@@ -19,9 +19,11 @@ STOP_WORDS = frozenset({
 })
 
 
-def preprocess(text: str) -> str:
+def preprocess(text: str, category: str | None = None) -> str:
     text = text.lower()
     text = _PUNCTUATION_RE.sub(" ", text)
+    if category and category.lower() == "politics":
+        text = text.replace("shut down", "shutdown")
     text = expand_synonyms(text)
     tokens = text.split()
     tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 1]

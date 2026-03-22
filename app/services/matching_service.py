@@ -52,7 +52,7 @@ class MatchingService:
         }
 
         questions = [m.question for m in markets]
-        preprocessed = [preprocess(q) for q in questions]
+        preprocessed = [preprocess(q, category=m.category) for q, m in zip(questions, markets)]
         tfidf_matrix, vectorizer = build_tfidf_matrix(preprocessed)
 
         new_pairs = 0

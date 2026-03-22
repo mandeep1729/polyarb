@@ -216,15 +216,16 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
         [g.canonical_question for g in new_groups]
         + [g.canonical_question for g in existing_groups]
     )
-    preprocessed = [preprocess(q) for q in all_questions]
+    all_groups_ordered = list(new_groups) + list(existing_groups)
+    preprocessed = [preprocess(q, category=g.category) for q, g in zip(all_questions, all_groups_ordered)]
     tfidf_matrix, _ = build_tfidf_matrix(preprocessed)
 
     # Build description TF-IDF matrix
     all_descs = []
-    for g in list(new_groups) + list(existing_groups):
+    for g in all_groups_ordered:
         rep = reps.get(g.id, {})
         desc_text = rep.get("description") or ""
-        all_descs.append(preprocess(desc_text) if desc_text else "")
+        all_descs.append(preprocess(desc_text, category=g.category) if desc_text else "")
 
     has_descs = any(d for d in all_descs)
     desc_tfidf_matrix = None
@@ -393,16 +394,16 @@ async def _phase2_merge_cross_platform(db) -> int:
 
             # Build TF-IDF only for these two platforms' groups
             all_questions = [g.canonical_question for g in groups_a] + [g.canonical_question for g in groups_b]
-            preprocessed = [preprocess(q) for q in all_questions]
+            combined_groups = list(groups_a) + list(groups_b)
+            preprocessed = [preprocess(q, category=g.category) for q, g in zip(all_questions, combined_groups)]
             tfidf_matrix, _ = build_tfidf_matrix(preprocessed)
 
             # Build description TF-IDF matrix
-            combined_groups = list(groups_a) + list(groups_b)
             all_descs = []
             for g in combined_groups:
                 rep = reps.get(g.id, {})
                 desc_text = rep.get("description") or ""
-                all_descs.append(preprocess(desc_text) if desc_text else "")
+                all_descs.append(preprocess(desc_text, category=g.category) if desc_text else "")
 
             has_descs = any(d for d in all_descs)
             desc_tfidf_matrix = None

@@ -237,7 +237,8 @@ async def audit_equivalence(
                     continue
 
                 all_questions = [g.canonical_question for g in groups_a] + [g.canonical_question for g in groups_b]
-                preprocessed_qs = [preprocess(q) for q in all_questions]
+                all_gs = list(groups_a) + list(groups_b)
+                preprocessed_qs = [preprocess(q, category=g.category) for q, g in zip(all_questions, all_gs)]
                 tfidf_matrix, _ = build_tfidf_matrix(preprocessed_qs)
                 len_a = len(groups_a)
 

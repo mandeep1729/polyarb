@@ -56,8 +56,8 @@ def score_pair(
     if desc_tfidf_score is None:
         desc_tfidf_score = _description_similarity(desc1, desc2)
 
-    preprocessed_q1 = preprocess(q1)
-    preprocessed_q2 = preprocess(q2)
+    preprocessed_q1 = preprocess(q1, category=cat1)
+    preprocessed_q2 = preprocess(q2, category=cat2)
     fuzzy_score = fuzz.token_sort_ratio(preprocessed_q1, preprocessed_q2) / 100.0
 
     category_score = 0.0

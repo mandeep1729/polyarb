@@ -80,7 +80,7 @@ async def generate_candidates(db: AsyncSession) -> list[dict]:
 
     # Build TF-IDF matrix with index lookup
     questions = [m.question for m in markets]
-    preprocessed = [preprocess(q) for q in questions]
+    preprocessed = [preprocess(q, category=m.category) for q, m in zip(questions, markets)]
     tfidf_matrix, _ = build_tfidf_matrix(preprocessed)
     id_to_idx = {m.id: i for i, m in enumerate(markets)}
 
