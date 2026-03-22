@@ -82,10 +82,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: "http://192.168.86.31:8001/api/v1"
     restart: unless-stopped
     ports:
       - "3001:3000"
-    environment:
-      NEXT_PUBLIC_API_URL: "http://backend:8000"
     depends_on:
       - backend
