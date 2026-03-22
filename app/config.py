@@ -35,6 +35,26 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "market_embeddings"
     EMBEDDING_MATCH_THRESHOLD: float = 0.75
 
+    # Trading bot defaults
+    BOT_DEFAULT_POLL_INTERVAL_SECONDS: int = 30
+    BOT_ORDER_TIMEOUT_SECONDS: int = 300
+    BOT_ROLLBACK_TIMEOUT_SECONDS: int = 600
+    BOT_DEFAULT_MIN_PROFIT: float = 0.02
+    BOT_DEFAULT_MAX_POSITION_SIZE: int = 100
+    BOT_MAX_TOTAL_EXPOSURE: float = 500.0
+    BOT_ALERT_WEBHOOK_URL: str = ""
+
+    # Polymarket trading credentials
+    POLYMARKET_PRIVATE_KEY: str = ""
+    POLYMARKET_API_KEY: str = ""
+    POLYMARKET_API_SECRET: str = ""
+    POLYMARKET_PASSPHRASE: str = ""
+    POLYMARKET_CHAIN_ID: int = 137
+
+    # Kalshi trading credentials
+    KALSHI_API_KEY: str = ""
+    KALSHI_API_SECRET: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

@@ -312,6 +312,162 @@ class KalshiConnector:
             logger.error("kalshi_search_error", query=query, error=str(exc), exc_info=True)
             return []
 
+    # --- Trading methods ---
+
+    async def fetch_order_book(self, ticker: str):
+        """Fetch order book for a market ticker."""
+        from app.services.trading.execution_engine import OrderBook
+
+        try:
+            data = await asyncio.to_thread(
+                self._get_markets_raw, tickers=ticker
+            )
+            markets = data.get("markets") or []
+            if not markets:
+                return OrderBook()
+            m = markets[0]
+            best_bid = first_float(m, "yes_bid", "yes_bid_dollars")
+            best_ask = first_float(m, "yes_ask", "yes_ask_dollars")
+            return OrderBook(best_bid=best_bid, best_ask=best_ask)
+        except Exception as exc:
+            logger.error("kalshi_order_book_error", ticker=ticker, error=str(exc))
+            return OrderBook()
+
+    async def submit_order(self, ticker: str, side: str, price: float, quantity: int):
+        """Submit a limit order via Kalshi API."""
+        from app.services.trading.execution_engine import OrderResult
+
+        if not settings.KALSHI_API_KEY:
+            raise RuntimeError("Trading not enabled — KALSHI_API_KEY not set")
+
+        url = f"{settings.KALSHI_API_URL}/portfolio/orders"
+        payload = {
+            "ticker": ticker,
+            "action": "buy" if side.lower() == "buy" else "sell",
+            "type": "limit",
+            "side": "yes" if "yes" in side.lower() else "no",
+            "count": quantity,
+            "yes_price": int(price * 100),  # Kalshi uses cents
+        }
+
+        def _submit():
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {settings.KALSHI_API_KEY}",
+                },
+                method="POST",
+            )
+            resp = urllib.request.urlopen(req, timeout=30)
+            return json.loads(resp.read())
+
+        try:
+            result = await asyncio.to_thread(_submit)
+            order = result.get("order", {})
+            return OrderResult(
+                platform_order_id=order.get("order_id", ""),
+                status=order.get("status", "pending"),
+            )
+        except Exception as exc:
+            logger.error("kalshi_submit_order_error", ticker=ticker, error=str(exc))
+            raise
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """Cancel an open order."""
+        url = f"{settings.KALSHI_API_URL}/portfolio/orders/{order_id}"
+
+        def _cancel():
+            req = urllib.request.Request(
+                url,
+                headers={"Authorization": f"Bearer {settings.KALSHI_API_KEY}"},
+                method="DELETE",
+            )
+            urllib.request.urlopen(req, timeout=30)
+
+        try:
+            await asyncio.to_thread(_cancel)
+            return True
+        except Exception as exc:
+            logger.error("kalshi_cancel_error", order_id=order_id, error=str(exc))
+            return False
+
+    async def get_order_status(self, order_id: str):
+        """Get order status."""
+        from app.services.trading.execution_engine import OrderResult
+
+        url = f"{settings.KALSHI_API_URL}/portfolio/orders/{order_id}"
+
+        def _get():
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {settings.KALSHI_API_KEY}",
+                },
+            )
+            resp = urllib.request.urlopen(req, timeout=30)
+            return json.loads(resp.read())
+
+        try:
+            data = await asyncio.to_thread(_get)
+            order = data.get("order", {})
+            status_map = {"resting": "pending", "executed": "filled", "canceled": "cancelled"}
+            return OrderResult(
+                platform_order_id=order_id,
+                status=status_map.get(order.get("status", ""), "pending"),
+                filled_quantity=order.get("remaining_count", 0),
+                avg_fill_price=first_float(order, "avg_price_filled") or None,
+            )
+        except Exception as exc:
+            logger.error("kalshi_order_status_error", order_id=order_id, error=str(exc))
+            raise
+
+    async def get_balance(self) -> float:
+        """Get account balance."""
+        url = f"{settings.KALSHI_API_URL}/portfolio/balance"
+
+        def _get():
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {settings.KALSHI_API_KEY}",
+                },
+            )
+            resp = urllib.request.urlopen(req, timeout=30)
+            return json.loads(resp.read())
+
+        try:
+            data = await asyncio.to_thread(_get)
+            return float(data.get("balance", 0)) / 100  # Kalshi returns cents
+        except Exception as exc:
+            logger.error("kalshi_balance_error", error=str(exc))
+            return 0.0
+
+    async def get_positions(self) -> list[dict]:
+        """Get current positions."""
+        url = f"{settings.KALSHI_API_URL}/portfolio/positions"
+
+        def _get():
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {settings.KALSHI_API_KEY}",
+                },
+            )
+            resp = urllib.request.urlopen(req, timeout=30)
+            return json.loads(resp.read())
+
+        try:
+            data = await asyncio.to_thread(_get)
+            positions = data.get("market_positions", [])
+            return [{"market_id": p.get("ticker", "")} for p in positions]
+        except Exception:
+            return []
+
     def normalize(self, raw: dict) -> dict:
         # SDK numeric fields or dollar-string variants from nested events
         yes_bid = first_float(raw, "yes_bid", "yes_bid_dollars")

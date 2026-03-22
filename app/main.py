@@ -13,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.admin import router as admin_router
 from app.api.arbitrage import router as arbitrage_router
+from app.api.bots import router as bots_router
 from app.api.groups import router as groups_router
 from app.api.synonyms import router as synonyms_router
 from app.api.health import router as health_router
@@ -68,11 +69,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     start_scheduler_thread(create_scheduler)
     logger.info("scheduler_started")
 
+    # Start the trading bot runner with shared connectors
+    from app.connectors.kalshi import KalshiConnector
+    from app.connectors.polymarket import PolymarketConnector
+    from app.database import async_session_factory
+    from app.services.trading.bot_runner import BotRunner
+
+    polymarket_connector = PolymarketConnector()
+    kalshi_connector = KalshiConnector()
+    connectors = {
+        "polymarket": polymarket_connector,
+        "kalshi": kalshi_connector,
+    }
+    bot_runner = BotRunner(connectors, async_session_factory)
+    app.state.bot_runner = bot_runner
+    # Startup in background — don't block the lifespan handler
+    import asyncio
+    asyncio.create_task(bot_runner.startup())
+    logger.info("bot_runner_started")
+
     yield
+
+    await bot_runner.shutdown()
+    logger.info("bot_runner_stopped")
 
     stop_scheduler_thread()
     logger.info("scheduler_stopped")
 
+    await polymarket_connector.close()
     await cache.disconnect()
     logger.info("cache_disconnected")
 
@@ -103,6 +127,7 @@ app.include_router(arbitrage_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1")
 app.include_router(groups_router, prefix="/api/v1")
 app.include_router(synonyms_router, prefix="/api/v1")
+app.include_router(bots_router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

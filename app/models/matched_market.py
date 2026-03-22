@@ -9,6 +9,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -24,6 +25,7 @@ class MatchedMarketPair(Base):
     odds_delta: Mapped[float | None] = mapped_column(Float, default=None)
     match_method: Mapped[str] = mapped_column(String(50), default="tfidf_fuzzy")
     category: Mapped[str | None] = mapped_column(String(100), default=None)
+    outcome_mapping: Mapped[dict | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

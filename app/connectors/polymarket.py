@@ -33,7 +33,22 @@ class PolymarketConnector(BaseConnector):
         self._gamma_url = settings.POLYMARKET_API_URL
         self._clob_url = settings.POLYMARKET_CLOB_URL
         self._ws_url = settings.POLYMARKET_WS_URL
+        # Read-only client for market data
         self._clob = ClobClient(settings.POLYMARKET_CLOB_URL)
+        # Authenticated client for trading (optional — only if credentials are set)
+        self._trading_clob: ClobClient | None = None
+        if settings.POLYMARKET_PRIVATE_KEY:
+            self._trading_clob = ClobClient(
+                settings.POLYMARKET_CLOB_URL,
+                key=settings.POLYMARKET_PRIVATE_KEY,
+                chain_id=settings.POLYMARKET_CHAIN_ID,
+                creds={
+                    "api_key": settings.POLYMARKET_API_KEY,
+                    "api_secret": settings.POLYMARKET_API_SECRET,
+                    "api_passphrase": settings.POLYMARKET_PASSPHRASE,
+                },
+            )
+            logger.info("polymarket_trading_enabled")
 
     async def fetch_markets(self) -> list[dict]:
         """Fetch markets via event-first pagination on Gamma API.
@@ -216,6 +231,104 @@ class PolymarketConnector(BaseConnector):
             return markets[:limit]
         except Exception as exc:
             logger.error("polymarket_search_error", query=query, error=str(exc), exc_info=True)
+            return []
+
+    # --- Trading methods ---
+
+    async def fetch_order_book(self, token_id: str):
+        """Fetch order book for a token, returning best bid/ask."""
+        from app.services.trading.execution_engine import OrderBook
+
+        try:
+            book = await asyncio.to_thread(
+                self._clob.get_order_book, token_id
+            )
+            best_bid = None
+            best_ask = None
+            if hasattr(book, "bids") and book.bids:
+                best_bid = float(book.bids[0].price)
+            if hasattr(book, "asks") and book.asks:
+                best_ask = float(book.asks[0].price)
+            return OrderBook(best_bid=best_bid, best_ask=best_ask)
+        except Exception as exc:
+            logger.error("polymarket_order_book_error", token_id=token_id, error=str(exc))
+            return OrderBook()
+
+    async def submit_order(self, token_id: str, side: str, price: float, quantity: int):
+        """Submit a limit order via the authenticated CLOB client."""
+        from app.services.trading.execution_engine import OrderResult
+
+        if not self._trading_clob:
+            raise RuntimeError("Trading not enabled — POLYMARKET_PRIVATE_KEY not set")
+
+        order = await asyncio.to_thread(
+            self._trading_clob.create_and_post_order,
+            {
+                "token_id": token_id,
+                "price": price,
+                "size": quantity,
+                "side": side.upper(),
+            },
+        )
+        order_id = order.get("id", "") if isinstance(order, dict) else str(order)
+        return OrderResult(
+            platform_order_id=order_id,
+            status="pending",
+        )
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """Cancel an open order."""
+        if not self._trading_clob:
+            raise RuntimeError("Trading not enabled")
+        try:
+            await asyncio.to_thread(self._trading_clob.cancel, order_id)
+            return True
+        except Exception as exc:
+            logger.error("polymarket_cancel_error", order_id=order_id, error=str(exc))
+            return False
+
+    async def get_order_status(self, order_id: str):
+        """Poll order status."""
+        from app.services.trading.execution_engine import OrderResult
+
+        if not self._trading_clob:
+            raise RuntimeError("Trading not enabled")
+        order = await asyncio.to_thread(self._trading_clob.get_order, order_id)
+        if isinstance(order, dict):
+            status = order.get("status", "pending")
+            filled = int(order.get("size_matched", 0))
+            price = float(order.get("price", 0))
+            return OrderResult(
+                platform_order_id=order_id,
+                status="filled" if status == "matched" else status,
+                filled_quantity=filled,
+                avg_fill_price=price if filled > 0 else None,
+            )
+        return OrderResult(platform_order_id=order_id, status="pending")
+
+    async def get_balance(self) -> float:
+        """Get account balance (USDC)."""
+        if not self._trading_clob:
+            raise RuntimeError("Trading not enabled")
+        try:
+            balance = await asyncio.to_thread(self._trading_clob.get_balance_allowance)
+            if isinstance(balance, dict):
+                return float(balance.get("balance", 0))
+            return 0.0
+        except Exception as exc:
+            logger.error("polymarket_balance_error", error=str(exc))
+            return 0.0
+
+    async def get_positions(self) -> list[dict]:
+        """Get current positions."""
+        if not self._trading_clob:
+            return []
+        try:
+            positions = await asyncio.to_thread(self._trading_clob.get_positions)
+            if isinstance(positions, list):
+                return [{"market_id": p.get("asset", {}).get("condition_id", "")} for p in positions]
+            return []
+        except Exception:
             return []
 
     def normalize(self, raw: dict) -> dict:
