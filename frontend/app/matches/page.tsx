@@ -19,10 +19,13 @@ const SORT_OPTIONS = [
 function MatchesContent() {
   const [category] = useQueryState('category', { defaultValue: 'All' });
   const [sort, setSort] = useQueryState('sort', { defaultValue: 'similarity' });
+  const [onesidedParam, setOnesidedParam] = useQueryState('onesided', { defaultValue: '0' });
+  const showOnesided = onesidedParam === '1';
 
   const filters = {
     category: category === 'All' ? undefined : category ?? undefined,
     sort: sort ?? 'similarity',
+    hide_onesided: !showOnesided,
     limit: 50,
   };
 
@@ -46,22 +49,42 @@ function MatchesContent() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <CategoryFilter />
 
-        <div className="flex overflow-hidden rounded-lg border border-gray-800">
-          {SORT_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setSort(opt.value)}
-              className={cn(
-                'px-3 py-1.5 text-xs font-medium transition-colors',
-                sort === opt.value
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-gray-900 text-gray-400 hover:text-gray-200',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50'
-              )}
+        <div className="flex items-center gap-4">
+          <label className="flex cursor-pointer items-center gap-1.5">
+            <div
+              role="switch"
+              aria-checked={showOnesided}
+              onClick={() => setOnesidedParam(showOnesided ? '0' : '1')}
+              className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                showOnesided ? 'bg-emerald-600' : 'bg-gray-700'
+              }`}
             >
-              {opt.label}
-            </button>
-          ))}
+              <span
+                className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                  showOnesided ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`}
+              />
+            </div>
+            <span className="text-xs text-gray-400">Show one-sided</span>
+          </label>
+
+          <div className="flex overflow-hidden rounded-lg border border-gray-800">
+            {SORT_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setSort(opt.value)}
+                className={cn(
+                  'px-3 py-1.5 text-xs font-medium transition-colors',
+                  sort === opt.value
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-gray-900 text-gray-400 hover:text-gray-200',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

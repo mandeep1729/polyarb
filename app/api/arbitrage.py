@@ -21,6 +21,7 @@ async def list_opportunities(
     min_delta: float = Query(0.0, ge=0.0, description="Minimum odds delta"),
     sort_by: str = Query("odds_delta", description="Sort field: odds_delta, similarity_score"),
     category: str | None = Query(None, description="Filter by category"),
+    hide_onesided: bool = Query(True, description="Hide pairs where either leg trades above 97c"),
     limit: int = Query(20, ge=1, le=100, description="Page size"),
     cursor: str | None = Query(None, description="Pagination cursor"),
     db: AsyncSession = Depends(get_db),
@@ -30,6 +31,7 @@ async def list_opportunities(
         min_delta=min_delta,
         sort_by=sort_by,
         category=category,
+        hide_onesided=hide_onesided,
         limit=limit,
         cursor=cursor,
     )

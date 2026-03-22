@@ -1,5 +1,5 @@
 import structlog
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import Float, and_, cast, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -16,11 +16,14 @@ class ArbitrageService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    ONE_SIDED_THRESHOLD = 0.97
+
     async def get_opportunities(
         self,
         min_delta: float = 0.0,
         sort_by: str = "odds_delta",
         category: str | None = None,
+        hide_onesided: bool = True,
         limit: int = 20,
         cursor: str | None = None,
     ) -> ArbitrageListResponse:
@@ -50,6 +53,21 @@ class ArbitrageService:
             filters.append(func.abs(func.coalesce(MatchedMarketPair.odds_delta, 0)) >= min_delta)
         if category:
             filters.append(MatchedMarketPair.category == category)
+        if hide_onesided:
+            jt_a = func.jsonb_each_text(MarketA.outcome_prices).table_valued("key", "value")
+            max_price_a = (
+                select(func.coalesce(func.max(cast(jt_a.c.value, Float)), 0.0))
+                .correlate(MarketA)
+                .scalar_subquery()
+            )
+            jt_b = func.jsonb_each_text(MarketB.outcome_prices).table_valued("key", "value")
+            max_price_b = (
+                select(func.coalesce(func.max(cast(jt_b.c.value, Float)), 0.0))
+                .correlate(MarketB)
+                .scalar_subquery()
+            )
+            filters.append(max_price_a <= self.ONE_SIDED_THRESHOLD)
+            filters.append(max_price_b <= self.ONE_SIDED_THRESHOLD)
         if cursor:
             filters.append(MatchedMarketPair.id > int(cursor))
         if filters:

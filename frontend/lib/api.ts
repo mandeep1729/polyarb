@@ -67,6 +67,7 @@ export interface ArbitrageFilters {
   category?: string;
   platform?: string;
   sort?: string;
+  hide_onesided?: boolean;
   cursor?: string;
   limit?: number;
 }
