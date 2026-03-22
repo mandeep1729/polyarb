@@ -1,6 +1,7 @@
 import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.market import UnifiedMarket
 from app.models.matched_market import MatchedMarketPair
@@ -23,25 +24,25 @@ class ArbitrageService:
         limit: int = 20,
         cursor: str | None = None,
     ) -> ArbitrageListResponse:
-        market_a = UnifiedMarket.__table__.alias("market_a")
-        market_b = UnifiedMarket.__table__.alias("market_b")
-        platform_a = Platform.__table__.alias("platform_a")
-        platform_b = Platform.__table__.alias("platform_b")
+        MarketA = aliased(UnifiedMarket, flat=True)
+        MarketB = aliased(UnifiedMarket, flat=True)
+        PlatformA = aliased(Platform, flat=True)
+        PlatformB = aliased(Platform, flat=True)
 
         stmt = (
             select(
                 MatchedMarketPair,
-                market_a,
-                market_b,
-                platform_a.c.name.label("platform_a_name"),
-                platform_a.c.slug.label("platform_a_slug"),
-                platform_b.c.name.label("platform_b_name"),
-                platform_b.c.slug.label("platform_b_slug"),
+                MarketA,
+                MarketB,
+                PlatformA.name.label("platform_a_name"),
+                PlatformA.slug.label("platform_a_slug"),
+                PlatformB.name.label("platform_b_name"),
+                PlatformB.slug.label("platform_b_slug"),
             )
-            .join(market_a, market_a.c.id == MatchedMarketPair.market_a_id)
-            .join(market_b, market_b.c.id == MatchedMarketPair.market_b_id)
-            .join(platform_a, platform_a.c.id == market_a.c.platform_id)
-            .join(platform_b, platform_b.c.id == market_b.c.platform_id)
+            .join(MarketA, MarketA.id == MatchedMarketPair.market_a_id)
+            .join(MarketB, MarketB.id == MatchedMarketPair.market_b_id)
+            .join(PlatformA, PlatformA.id == MarketA.platform_id)
+            .join(PlatformB, PlatformB.id == MarketB.platform_id)
         )
 
         filters = []
@@ -338,29 +339,29 @@ class ArbitrageService:
         return max_delta
 
     @staticmethod
-    def _row_to_market_response(row: object, platform_name: str, platform_slug: str) -> MarketResponse:
+    def _row_to_market_response(market: UnifiedMarket, platform_name: str, platform_slug: str) -> MarketResponse:
         return MarketResponse(
-            id=row.id,
-            platform_id=row.platform_id,
+            id=market.id,
+            platform_id=market.platform_id,
             platform_name=platform_name,
             platform_slug=platform_slug,
-            platform_market_id=row.platform_market_id,
-            question=row.question,
-            description=row.description,
-            category=row.category,
-            outcomes=row.outcomes or {},
-            outcome_prices=row.outcome_prices or {},
-            volume_total=row.volume_total,
-            volume_24h=row.volume_24h,
-            liquidity=row.liquidity,
-            start_date=row.start_date,
-            end_date=row.end_date,
-            status=row.status,
-            resolution=row.resolution,
-            deep_link_url=row.deep_link_url,
-            image_url=row.image_url,
-            price_change_24h=row.price_change_24h,
-            last_synced_at=row.last_synced_at,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
+            platform_market_id=market.platform_market_id,
+            question=market.question,
+            description=market.description,
+            category=market.category,
+            outcomes=market.outcomes or {},
+            outcome_prices=market.outcome_prices or {},
+            volume_total=market.volume_total,
+            volume_24h=market.volume_24h,
+            liquidity=market.liquidity,
+            start_date=market.start_date,
+            end_date=market.end_date,
+            status=market.status,
+            resolution=market.resolution,
+            deep_link_url=market.deep_link_url,
+            image_url=market.image_url,
+            price_change_24h=market.price_change_24h,
+            last_synced_at=market.last_synced_at,
+            created_at=market.created_at,
+            updated_at=market.updated_at,
         )
