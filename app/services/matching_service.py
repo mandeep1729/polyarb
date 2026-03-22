@@ -1,6 +1,4 @@
-import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import structlog
 from sqlalchemy import or_, select
@@ -15,24 +13,6 @@ from app.models.price_history import latest_snapshot_subquery
 logger = structlog.get_logger()
 
 MATCH_THRESHOLD = 0.55
-SCORE_CACHE_PATH = Path("data/pair_scores_cache.json")
-
-
-def _load_score_cache() -> dict[str, float]:
-    """Load cached pair scores from disk."""
-    if not SCORE_CACHE_PATH.exists():
-        return {}
-    try:
-        return json.loads(SCORE_CACHE_PATH.read_text())
-    except (json.JSONDecodeError, OSError):
-        logger.warning("score_cache_corrupted", path=str(SCORE_CACHE_PATH))
-        return {}
-
-
-def _save_score_cache(cache: dict[str, float]) -> None:
-    """Persist pair scores cache to disk."""
-    SCORE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SCORE_CACHE_PATH.write_text(json.dumps(cache))
 
 
 class MatchingService:
@@ -71,14 +51,11 @@ class MatchingService:
             (row[0], row[1]) for row in existing_result.all()
         }
 
-        score_cache = _load_score_cache()
-
         questions = [m.question for m in markets]
         preprocessed = [preprocess(q, category=m.category) for q, m in zip(questions, markets)]
         tfidf_matrix, vectorizer = build_tfidf_matrix(preprocessed)
 
         new_pairs = 0
-        cache_hits = 0
         platform_ids = sorted(platform_groups.keys())
 
         for i in range(len(platform_ids)):
@@ -108,21 +85,15 @@ class MatchingService:
                         if pair_key in existing_pairs:
                             continue
 
-                        cache_key = f"{pair_key[0]}:{pair_key[1]}"
-                        if cache_key in score_cache:
-                            composite = score_cache[cache_key]
-                            cache_hits += 1
-                        else:
-                            composite = score_pair(
-                                q1=m_a.question,
-                                q2=m_b.question,
-                                cat1=m_a.category,
-                                cat2=m_b.category,
-                                end1=m_a.end_date,
-                                end2=m_b.end_date,
-                                tfidf_score=tfidf_score,
-                            )
-                            score_cache[cache_key] = round(composite, 4)
+                        composite = score_pair(
+                            q1=m_a.question,
+                            q2=m_b.question,
+                            cat1=m_a.category,
+                            cat2=m_b.category,
+                            end1=m_a.end_date,
+                            end2=m_b.end_date,
+                            tfidf_score=tfidf_score,
+                        )
 
                         if composite >= MATCH_THRESHOLD:
                             matched = MatchedMarketPair(
@@ -136,11 +107,5 @@ class MatchingService:
                             existing_pairs.add(pair_key)
                             new_pairs += 1
 
-        _save_score_cache(score_cache)
-        logger.info(
-            "matching_complete",
-            new_pairs=new_pairs,
-            total_markets=len(markets),
-            cache_hits=cache_hits,
-        )
+        logger.info("matching_complete", new_pairs=new_pairs, total_markets=len(markets))
         return new_pairs
