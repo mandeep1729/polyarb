@@ -50,7 +50,7 @@ class MatchingService:
             .where(UnifiedMarket.is_active.is_(True))
             .where(UnifiedMarket.status == "active")
             .where(or_(UnifiedMarket.end_date.is_(None), UnifiedMarket.end_date >= now))
-            .where(snap.c.liquidity > 0)
+            .where(snap.c.liquidity >= 100)
         )
         markets = result.scalars().all()
 
