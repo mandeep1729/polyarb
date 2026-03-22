@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.schemas.market import MarketResponse
-from app.services.live_search_service import LiveSearchService
+from app.services.search_service import SearchService
 
 logger = structlog.get_logger()
 
@@ -27,7 +27,7 @@ async def search_markets(
 ) -> list[MarketResponse]:
     if not q and not exclude_q:
         return []
-    service = LiveSearchService(db)
+    service = SearchService(db)
     return await service.search(
         query=q or "",
         category=category,
