@@ -26,7 +26,7 @@ PLATFORM_CONFIGS = {
     },
 }
 
-MIN_LIQUIDITY_NEW_MARKET = 10
+MIN_LIQUIDITY_NEW_MARKET = 100
 
 
 async def _ensure_platform(db, slug: str) -> int:
