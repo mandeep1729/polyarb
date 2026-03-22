@@ -54,6 +54,10 @@ async def generate_candidates(db: AsyncSession) -> list[dict]:
     if len(markets) < 2:
         return []
 
+    # Only keep markets with end_date (matching requires temporal gate)
+    markets = [m for m in markets if m.end_date is not None]
+    logger.info("llm_candidates_filtered", with_end_date=len(markets))
+
     # Group by platform
     platform_groups: dict[int, list[UnifiedMarket]] = {}
     for m in markets:
@@ -70,10 +74,11 @@ async def generate_candidates(db: AsyncSession) -> list[dict]:
         (row[0], row[1]) for row in existing_result.all()
     }
 
-    # Build TF-IDF matrix
+    # Build TF-IDF matrix with index lookup
     questions = [m.question for m in markets]
     preprocessed = [preprocess(q) for q in questions]
     tfidf_matrix, _ = build_tfidf_matrix(preprocessed)
+    id_to_idx = {m.id: i for i, m in enumerate(markets)}
 
     candidates: list[dict] = []
     platform_ids = sorted(platform_groups.keys())
@@ -85,8 +90,8 @@ async def generate_candidates(db: AsyncSession) -> list[dict]:
             markets_a = platform_groups[pid_a]
             markets_b = platform_groups[pid_b]
 
-            indices_a = [markets.index(m) for m in markets_a]
-            indices_b = set(markets.index(m) for m in markets_b)
+            indices_a = [id_to_idx[m.id] for m in markets_a]
+            indices_b = set(id_to_idx[m.id] for m in markets_b)
 
             for idx_a in indices_a:
                 query_vec = tfidf_matrix[idx_a]

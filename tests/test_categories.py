@@ -7,6 +7,7 @@ from app.categories import (
     VALID_DB_CATEGORIES,
     infer_category,
     resolve_category,
+    resolve_tag,
 )
 
 
@@ -153,3 +154,50 @@ class TestInferCategory:
         assert infer_category("AI is the future") == "technology"
         assert infer_category("CPI data released") == "economics"
         assert infer_category("F1 racing season") == "sports"
+
+    def test_new_economics_keywords(self):
+        assert infer_category("Economy growth forecast") == "economics"
+        assert infer_category("Finance sector outlook") == "economics"
+        assert infer_category("Crude oil prices surge") == "economics"
+
+
+class TestResolveTag:
+    """Test resolve_tag() for mapping raw platform tags to canonical categories."""
+
+    def test_none_input(self):
+        assert resolve_tag(None) is None
+
+    def test_empty_string(self):
+        assert resolve_tag("") is None
+
+    def test_canonical_values_pass_through(self):
+        assert resolve_tag("economics") == "economics"
+        assert resolve_tag("politics") == "politics"
+        assert resolve_tag("crypto") == "crypto"
+
+    def test_frontend_names_resolve(self):
+        assert resolve_tag("Finance") == "economics"
+        assert resolve_tag("Sports") == "sports"
+        assert resolve_tag("Weather") == "climate"
+        assert resolve_tag("Science") == "technology"
+
+    def test_tag_aliases(self):
+        assert resolve_tag("Economy") == "economics"
+        assert resolve_tag("Equities") == "economics"
+        assert resolve_tag("Commodities") == "economics"
+        assert resolve_tag("Derivatives") == "economics"
+        assert resolve_tag("Up or Down") == "economics"
+        assert resolve_tag("Crypto Prices") == "crypto"
+        assert resolve_tag("NBA") == "sports"
+        assert resolve_tag("Elections") == "politics"
+        assert resolve_tag("Culture") == "entertainment"
+        assert resolve_tag("Esports") == "sports"
+
+    def test_case_insensitive(self):
+        assert resolve_tag("ECONOMY") == "economics"
+        assert resolve_tag("finance") == "economics"
+        assert resolve_tag("UP OR DOWN") == "economics"
+
+    def test_unknown_tag(self):
+        assert resolve_tag("SomeRandomTag") is None
+        assert resolve_tag("custom_tag") is None

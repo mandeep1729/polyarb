@@ -2,15 +2,25 @@ import asyncio
 import json
 from datetime import datetime
 
-import httpx
 import structlog
 import websockets
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import BookParams
 
 from app.config import settings
-from app.categories import infer_category
+from app.categories import infer_category, resolve_tag
 from app.connectors.base import BaseConnector
 
 logger = structlog.get_logger()
+
+
+def _inject_event_metadata(event: dict, market: dict) -> dict:
+    """Inject event-level metadata into a market dict for normalize()."""
+    market["_event_slug"] = event.get("slug", "")
+    market["_event_title"] = event.get("title", "")
+    market["_event_tags"] = event.get("tags", [])
+    market["_event_image"] = event.get("image")
+    return market
 
 
 class PolymarketConnector(BaseConnector):
@@ -23,9 +33,16 @@ class PolymarketConnector(BaseConnector):
         self._gamma_url = settings.POLYMARKET_API_URL
         self._clob_url = settings.POLYMARKET_CLOB_URL
         self._ws_url = settings.POLYMARKET_WS_URL
+        self._clob = ClobClient(settings.POLYMARKET_CLOB_URL)
 
     async def fetch_markets(self) -> list[dict]:
+        """Fetch markets via event-first pagination on Gamma API.
+
+        Paginates GET /events?active=true&closed=false, then flattens
+        nested markets with injected event metadata for reliable grouping.
+        """
         all_markets: list[dict] = []
+        seen_condition_ids: set[str] = set()
         offset = 0
         page_size = 100
 
@@ -34,7 +51,7 @@ class PolymarketConnector(BaseConnector):
 
             response = await self._retry(
                 lambda o=offset: client.get(
-                    f"{self._gamma_url}/markets",
+                    f"{self._gamma_url}/events",
                     params={
                         "limit": page_size,
                         "offset": o,
@@ -44,20 +61,31 @@ class PolymarketConnector(BaseConnector):
                 )
             )
 
-            data = response.json()
+            events = response.json()
 
-            if not data:
+            if not events or not isinstance(events, list):
                 break
 
-            all_markets.extend(data)
+            for event in events:
+                nested = event.get("markets", [])
+                if not isinstance(nested, list):
+                    continue
+                for market in nested:
+                    cid = market.get("condition_id") or market.get("conditionId", "")
+                    if not cid or cid in seen_condition_ids:
+                        continue
+                    seen_condition_ids.add(cid)
+                    _inject_event_metadata(event, market)
+                    all_markets.append(market)
+
             logger.info(
                 "polymarket_fetch_page",
                 offset=offset,
-                count=len(data),
-                total_so_far=len(all_markets),
+                events_on_page=len(events),
+                total_markets=len(all_markets),
             )
 
-            if len(data) < page_size:
+            if len(events) < page_size:
                 break
 
             offset += page_size
@@ -66,7 +94,7 @@ class PolymarketConnector(BaseConnector):
         return all_markets
 
     async def fetch_prices(self, token_ids: list[str]) -> dict[str, str]:
-        """Fetch midpoint prices for a batch of token_ids via POST /midpoints.
+        """Fetch midpoint prices for a batch of token_ids via py-clob-client SDK.
 
         Args:
             token_ids: List of CLOB token_ids (NOT condition_ids).
@@ -78,22 +106,14 @@ class PolymarketConnector(BaseConnector):
             return {}
 
         all_prices: dict[str, str] = {}
-        client = await self._get_client()
-
         batch_size = 100
         for i in range(0, len(token_ids), batch_size):
             batch = token_ids[i : i + batch_size]
-            body = [{"token_id": tid} for tid in batch]
+            params = [BookParams(token_id=tid) for tid in batch]
             try:
-                response = await self._retry(
-                    lambda b=body: client.post(
-                        f"{self._clob_url}/midpoints",
-                        json=b,
-                    )
-                )
-                data = response.json()
-                if isinstance(data, dict):
-                    all_prices.update(data)
+                result = await asyncio.to_thread(self._clob.get_midpoints, params)
+                if isinstance(result, dict):
+                    all_prices.update(result)
             except Exception as exc:
                 logger.error(
                     "polymarket_midpoints_error",
@@ -166,8 +186,9 @@ class PolymarketConnector(BaseConnector):
     async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
         """Search Polymarket events API using _q parameter, return flattened markets."""
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
-                response = await client.get(
+            client = await self._get_client()
+            response = await self._retry(
+                lambda: client.get(
                     f"{self._gamma_url}/events",
                     params={
                         "_q": query,
@@ -176,7 +197,7 @@ class PolymarketConnector(BaseConnector):
                         "closed": "false",
                     },
                 )
-                response.raise_for_status()
+            )
             events = response.json()
             if not isinstance(events, list):
                 return []
@@ -184,8 +205,11 @@ class PolymarketConnector(BaseConnector):
             markets: list[dict] = []
             for event in events:
                 nested = event.get("markets", [])
-                if isinstance(nested, list):
-                    markets.extend(nested)
+                if not isinstance(nested, list):
+                    continue
+                for market in nested:
+                    _inject_event_metadata(event, market)
+                    markets.append(market)
                 if len(markets) >= limit:
                     break
 
@@ -270,19 +294,27 @@ class PolymarketConnector(BaseConnector):
             liquidity = 0.0
 
         condition_id = raw.get("condition_id") or raw.get("conditionId") or ""
-        slug = raw.get("slug", "")
-        deep_link = f"https://polymarket.com/event/{slug}" if slug else None
+        # Prefer injected event metadata, fall back to legacy extraction
+        event_slug = raw.get("_event_slug") or ""
+        if not event_slug:
+            events = raw.get("events", [])
+            event_slug = events[0].get("slug") if events else raw.get("slug", "")
+        deep_link = f"https://polymarket.com/event/{event_slug}" if event_slug else None
 
         category = raw.get("category")
         if not category:
-            tags = raw.get("tags", [])
+            tags = raw.get("_event_tags") or raw.get("tags", [])
             if tags and isinstance(tags, list):
-                category = tags[0].get("label") if isinstance(tags[0], dict) else str(tags[0])
+                tag_label = tags[0].get("label") if isinstance(tags[0], dict) else str(tags[0])
+                # Resolve to canonical DB category; fall back to raw tag
+                category = resolve_tag(tag_label) or tag_label
         if not category:
             category = infer_category(
                 question=raw.get("question", ""),
                 description=raw.get("description"),
             )
+
+        image_url = raw.get("_event_image") or raw.get("image")
 
         return {
             "platform_market_id": condition_id or str(raw.get("id", "")),
@@ -298,6 +330,6 @@ class PolymarketConnector(BaseConnector):
             "end_date": end_date,
             "status": "active" if raw.get("active") else "closed",
             "deep_link_url": deep_link,
-            "image_url": raw.get("image"),
-            "event_ticker": slug or None,
+            "image_url": image_url,
+            "event_ticker": event_slug or None,
         }
