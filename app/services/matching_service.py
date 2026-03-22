@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.matching.scorer import score_pair
-from app.matching.text import build_tfidf_matrix, get_candidates, preprocess
+from app.matching.text import build_tfidf_matrix_incremental, get_candidates, preprocess
 from app.models.market import UnifiedMarket
 from app.models.matched_market import MatchedMarketPair
 from app.models.price_history import latest_snapshot_subquery
@@ -73,9 +73,18 @@ class MatchingService:
             (row[0], row[1]) for row in existing_result.all()
         }
 
+        market_ids = [m.id for m in markets]
         questions = [m.question for m in markets]
         preprocessed = [preprocess(q, category=m.category) for q, m in zip(questions, markets)]
-        tfidf_matrix, vectorizer = build_tfidf_matrix(preprocessed)
+
+        tfidf_matrix, vectorizer, ordered_ids, new_market_ids = (
+            build_tfidf_matrix_incremental(preprocessed, market_ids)
+        )
+
+        # Build id→index mapping for the matrix
+        id_to_idx = {mid: i for i, mid in enumerate(ordered_ids)}
+        # Build id→market mapping
+        id_to_market = {m.id: m for m in markets}
 
         new_pairs = 0
         platform_ids = sorted(platform_groups.keys())
@@ -87,31 +96,52 @@ class MatchingService:
                 markets_a = platform_groups[pid_a]
                 markets_b = platform_groups[pid_b]
 
-                indices_a = [markets.index(m) for m in markets_a]
-                indices_b = [markets.index(m) for m in markets_b]
+                indices_b_set = {id_to_idx[m.id] for m in markets_b if m.id in id_to_idx}
 
-                for idx_a in indices_a:
+                # Only search from markets that have at least one new side
+                # If we have new_market_ids, only iterate markets_a that are new
+                # (plus search new markets_b against all of a)
+                search_markets = markets_a
+                if new_market_ids:
+                    # Search: new_a vs all_b, plus all_a vs new_b
+                    new_a = [m for m in markets_a if m.id in new_market_ids]
+                    new_b_ids = {m.id for m in markets_b if m.id in new_market_ids}
+                    # For new_a: search against all of b
+                    # For old_a: only search against new_b (handled by skipping old-vs-old below)
+                    search_markets = markets_a  # search all, but skip old-vs-old
+
+                for m_a in search_markets:
+                    idx_a = id_to_idx.get(m_a.id)
+                    if idx_a is None:
+                        continue
+
+                    # Skip old-vs-old when we have incremental data
+                    is_a_new = m_a.id in new_market_ids
+                    if new_market_ids and not is_a_new:
+                        # Old market — only match against new markets on platform B
+                        # (old-vs-old was already matched in previous runs)
+                        pass  # still run candidates but filter below
+
                     query_vec = tfidf_matrix[idx_a]
                     candidates = get_candidates(
                         query_vec, tfidf_matrix, threshold=0.3
                     )
 
                     for idx_b, tfidf_score in candidates:
-                        if idx_b not in indices_b:
+                        if idx_b not in indices_b_set:
                             continue
 
-                        m_a = markets[idx_a]
-                        m_b = markets[idx_b]
+                        m_b_id = ordered_ids[idx_b]
+                        m_b = id_to_market.get(m_b_id)
+                        if m_b is None:
+                            continue
+
+                        # Skip old-vs-old: at least one side must be new
+                        if new_market_ids and not is_a_new and m_b.id not in new_market_ids:
+                            continue
 
                         pair_key = (min(m_a.id, m_b.id), max(m_a.id, m_b.id))
                         if pair_key in existing_pairs:
-                            continue
-
-                        if (
-                            last_run_start
-                            and m_a.created_at < last_run_start
-                            and m_b.created_at < last_run_start
-                        ):
                             continue
 
                         composite = score_pair(
@@ -136,5 +166,11 @@ class MatchingService:
                             existing_pairs.add(pair_key)
                             new_pairs += 1
 
-        logger.info("matching_complete", new_pairs=new_pairs, total_markets=len(markets))
+        logger.info(
+            "matching_complete",
+            new_pairs=new_pairs,
+            total_markets=len(markets),
+            new_markets=len(new_market_ids),
+            incremental=bool(new_market_ids),
+        )
         return new_pairs
