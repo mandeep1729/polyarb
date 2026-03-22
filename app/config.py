@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     POLYMARKET_API_SECRET: str = ""
     POLYMARKET_PASSPHRASE: str = ""
     POLYMARKET_CHAIN_ID: int = 137
+    POLYMARKET_FUNDER_ADDRESS: str = ""  # proxy wallet address from polymarket.com/settings
+    POLYMARKET_SIGNATURE_TYPE: int = 1   # 0=EOA/MetaMask, 1=Magic Link, 2=Gnosis Safe
 
     # Kalshi trading credentials
     KALSHI_API_KEY: str = ""

@@ -5,7 +5,7 @@ from datetime import datetime
 import structlog
 import websockets
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import BookParams
+from py_clob_client.clob_types import ApiCreds, AssetType, BalanceAllowanceParams, BookParams
 
 from app.config import settings
 from app.categories import infer_category, resolve_tag
@@ -42,11 +42,13 @@ class PolymarketConnector(BaseConnector):
                 settings.POLYMARKET_CLOB_URL,
                 key=settings.POLYMARKET_PRIVATE_KEY,
                 chain_id=settings.POLYMARKET_CHAIN_ID,
-                creds={
-                    "api_key": settings.POLYMARKET_API_KEY,
-                    "api_secret": settings.POLYMARKET_API_SECRET,
-                    "api_passphrase": settings.POLYMARKET_PASSPHRASE,
-                },
+                creds=ApiCreds(
+                    api_key=settings.POLYMARKET_API_KEY,
+                    api_secret=settings.POLYMARKET_API_SECRET,
+                    api_passphrase=settings.POLYMARKET_PASSPHRASE,
+                ),
+                signature_type=settings.POLYMARKET_SIGNATURE_TYPE,
+                funder=settings.POLYMARKET_FUNDER_ADDRESS or None,
             )
             logger.info("polymarket_trading_enabled")
 
@@ -307,11 +309,14 @@ class PolymarketConnector(BaseConnector):
         return OrderResult(platform_order_id=order_id, status="pending")
 
     async def get_balance(self) -> float:
-        """Get account balance (USDC)."""
+        """Get account USDC balance."""
         if not self._trading_clob:
             raise RuntimeError("Trading not enabled")
         try:
-            balance = await asyncio.to_thread(self._trading_clob.get_balance_allowance)
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            balance = await asyncio.to_thread(
+                self._trading_clob.get_balance_allowance, params
+            )
             if isinstance(balance, dict):
                 return float(balance.get("balance", 0))
             return 0.0
