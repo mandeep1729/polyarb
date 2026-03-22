@@ -29,15 +29,79 @@ class SearchService:
         exclude_q: str | None = None,
         limit: int = 20,
     ) -> list[MarketResponse]:
+        """Search markets across platforms.
+
+        When no platform filter is set, queries each platform independently to
+        guarantee every active platform is represented in results.
+        """
         ts_vector = func.to_tsvector("english", UnifiedMarket.question)
 
-        # Exclusion-only mode: no positive query, just exclude
         if not query:
             return await self._exclude_only_search(
                 ts_vector, category, platform, exclude_expired,
                 end_date_min, end_date_max, exclude_q, limit,
             )
 
+        if platform:
+            rows = await self._search_single_platform(
+                query, ts_vector, category, platform, exclude_expired,
+                end_date_min, end_date_max, exclude_q, limit,
+            )
+        else:
+            slugs = await self._get_platform_slugs()
+            per_platform_limit = max(limit // len(slugs), 1) if slugs else limit
+            rows: list[tuple] = []
+            seen_ids: set[int] = set()
+            for slug in slugs:
+                platform_rows = await self._search_single_platform(
+                    query, ts_vector, category, slug, exclude_expired,
+                    end_date_min, end_date_max, exclude_q, per_platform_limit,
+                )
+                for row in platform_rows:
+                    if row[0].id not in seen_ids:
+                        rows.append(row)
+                        seen_ids.add(row[0].id)
+
+            # Sort: ascending end_date (nulls last), then by event_ticker for grouping
+            rows.sort(key=lambda r: (
+                r[0].end_date is None,
+                r[0].end_date or datetime.max.replace(tzinfo=timezone.utc),
+                r[0].event_ticker or "",
+            ))
+            rows = rows[:limit]
+
+        results = [
+            MarketService._to_response(row[0], row[1], row[2])
+            for row in rows
+        ]
+
+        logger.info(
+            "search_service_search",
+            query=query,
+            total=len(results),
+        )
+
+        return results
+
+    async def _get_platform_slugs(self) -> list[str]:
+        """Return slugs for all active platforms."""
+        stmt = select(Platform.slug).where(Platform.is_active.is_(True))
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _search_single_platform(
+        self,
+        query: str,
+        ts_vector,
+        category: str | None,
+        platform_slug: str,
+        exclude_expired: bool,
+        end_date_min: datetime | None,
+        end_date_max: datetime | None,
+        exclude_q: str | None,
+        limit: int,
+    ) -> list[tuple]:
+        """Run FTS search for one platform, with ILIKE fallback if under limit."""
         or_query = build_tsquery(query)
         ts_query = func.to_tsquery("english", or_query)
         rank = func.ts_rank(ts_vector, ts_query)
@@ -48,27 +112,19 @@ class SearchService:
             .where(ts_vector.bool_op("@@")(ts_query))
         )
 
-        filters = self._build_filters(category, platform, exclude_expired, end_date_min, end_date_max)
+        filters = self._build_filters(category, platform_slug, exclude_expired, end_date_min, end_date_max)
         if exclude_q:
             filters.append(self._build_exclude_filter(ts_vector, exclude_q))
         if filters:
             stmt = stmt.where(and_(*filters))
 
         stmt = stmt.order_by(asc(UnifiedMarket.end_date).nulls_last(), desc("rank"))
+        stmt = stmt.limit(limit)
 
-        if platform:
-            # Single platform — no balancing needed
-            stmt = stmt.limit(limit)
-            result = await self._db.execute(stmt)
-            rows = result.all()
-        else:
-            # Fetch extra, then balance across platforms so no single platform
-            # dominates the results
-            stmt = stmt.limit(limit * 3)
-            result = await self._db.execute(stmt)
-            all_rows = result.all()
-            rows = self._balance_platforms(all_rows, limit)
+        result = await self._db.execute(stmt)
+        rows = list(result.all())
 
+        # ILIKE fallback if FTS didn't fill the limit
         if len(rows) < limit:
             like_pattern = f"%{query.lower()}%"
             existing_ids = {row[0].id for row in rows}
@@ -84,7 +140,7 @@ class SearchService:
                     UnifiedMarket.id.not_in(existing_ids)
                 )
 
-            fb_filters = self._build_filters(category, platform, exclude_expired, end_date_min, end_date_max)
+            fb_filters = self._build_filters(category, platform_slug, exclude_expired, end_date_min, end_date_max)
             if exclude_q:
                 fb_filters.extend(self._build_exclude_ilike_filters(exclude_q))
             if fb_filters:
@@ -92,28 +148,11 @@ class SearchService:
 
             fallback_stmt = fallback_stmt.limit(limit - len(rows))
             fallback_result = await self._db.execute(fallback_stmt)
-            fallback_rows = fallback_result.all()
+            rows.extend(
+                (*fb_row, 0.0) for fb_row in fallback_result.all()
+            )
 
-            combined_rows = list(rows) + [
-                (*fb_row, 0.0) for fb_row in fallback_rows
-            ]
-        else:
-            combined_rows = list(rows)
-
-        results = [
-            MarketService._to_response(row[0], row[1], row[2])
-            for row in combined_rows
-        ]
-
-        logger.info(
-            "search_service_search",
-            query=query,
-            fts_results=len(rows),
-            fallback_results=len(combined_rows) - len(rows),
-            total=len(results),
-        )
-
-        return results
+        return rows
 
     async def _exclude_only_search(
         self,
@@ -171,39 +210,6 @@ class SearchService:
         if end_date_max is not None:
             filters.append(UnifiedMarket.end_date <= end_date_max)
         return filters
-
-    @staticmethod
-    def _balance_platforms(rows: list, limit: int) -> list:
-        """Ensure each platform gets fair representation in results.
-
-        Takes top limit/num_platforms per platform, then fills remaining
-        slots with the next highest-ranked results from any platform.
-        """
-        by_platform: dict[str, list] = {}
-        for row in rows:
-            slug = row[2]  # Platform.slug
-            by_platform.setdefault(slug, []).append(row)
-
-        if len(by_platform) <= 1:
-            return rows[:limit]
-
-        per_platform = max(limit // len(by_platform), 1)
-        balanced: list = []
-        for platform_rows in by_platform.values():
-            balanced.extend(platform_rows[:per_platform])
-
-        # Fill remaining slots with next-best from any platform
-        seen_ids = {row[0].id for row in balanced}
-        for row in rows:
-            if len(balanced) >= limit:
-                break
-            if row[0].id not in seen_ids:
-                balanced.append(row)
-                seen_ids.add(row[0].id)
-
-        # Sort by end_date ascending (nulls last)
-        balanced.sort(key=lambda r: (r[0].end_date is None, r[0].end_date))
-        return balanced[:limit]
 
     @staticmethod
     def _build_exclude_filter(ts_vector, exclude_q: str):

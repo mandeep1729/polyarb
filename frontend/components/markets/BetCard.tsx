@@ -59,7 +59,7 @@ function CardContent({
   return (
     <>
       {/* Header badges */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         {market.category && (
           <span
             className={cn(
@@ -93,7 +93,7 @@ function CardContent({
       {/* Question */}
       <h3
         className={cn(
-          'mb-3 text-sm font-semibold leading-snug text-gray-100 group-hover:text-white',
+          'mb-2 text-sm font-semibold leading-snug text-gray-100 group-hover:text-white',
           !expanded && 'line-clamp-2'
         )}
       >
@@ -103,22 +103,36 @@ function CardContent({
       {/* Collapsed view: compact stats */}
       {!expanded && (
         <>
-          <div className="mb-3 space-y-1.5">
-            {Object.entries(market.outcomes).map(([outcome]) => (
-              <div
-                key={outcome}
-                className="flex items-center justify-between rounded-lg bg-gray-800/60 px-3 py-1.5"
-              >
-                <span className="text-xs text-gray-300">{outcome}</span>
-                <OddsDisplay
-                  probability={market.outcome_prices[outcome] ?? 0}
-                  size="sm"
-                />
-              </div>
-            ))}
-          </div>
+          {Object.entries(market.outcomes).length === 2 ? (
+            <div className="mb-2 flex items-center justify-between rounded-lg bg-gray-800/60 px-2.5 py-1">
+              {Object.entries(market.outcomes).map(([outcome]) => (
+                <div key={outcome} className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-300">{outcome}</span>
+                  <OddsDisplay
+                    probability={market.outcome_prices[outcome] ?? 0}
+                    size="sm"
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mb-2 space-y-1">
+              {Object.entries(market.outcomes).map(([outcome]) => (
+                <div
+                  key={outcome}
+                  className="flex items-center justify-between rounded-lg bg-gray-800/60 px-2.5 py-1"
+                >
+                  <span className="text-xs text-gray-300">{outcome}</span>
+                  <OddsDisplay
+                    probability={market.outcome_prices[outcome] ?? 0}
+                    size="sm"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
 
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-2 flex items-center justify-between">
             <SparklineChart data={sparklineData ?? []} />
             <LiquidityIndicator liquidity={market.liquidity} />
           </div>
