@@ -42,7 +42,12 @@ MarketListResponse = PaginatedResponse[MarketResponse]
 
 class PriceSnapshotResponse(BaseModel):
     outcome_prices: dict
-    volume: float | None = None
+    volume_24h: float | None = None
+    volume_total: float | None = None
+    liquidity: float | None = None
+    yes_ask: float | None = None
+    no_ask: float | None = None
+    price_change_24h: float | None = None
     timestamp: datetime
 
     model_config = {"from_attributes": True}

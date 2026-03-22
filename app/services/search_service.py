@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.categories import resolve_category
 from app.models.market import UnifiedMarket
 from app.models.platform import Platform
+from app.models.price_history import latest_snapshot_subquery, load_snap_map
 from app.schemas.market import MarketResponse
 from app.services.market_service import MarketService
 from app.services.search_utils import build_exclude_tsquery, build_tsquery
@@ -70,8 +71,11 @@ class SearchService:
             ))
             rows = rows[:limit]
 
+        # Bulk-load snapshot data for all result markets
+        snap_map = await load_snap_map(self._db, [row[0].id for row in rows])
+
         results = [
-            MarketService._to_response(row[0], row[1], row[2])
+            MarketService._to_response(row[0], row[1], row[2], snap=snap_map.get(row[0].id))
             for row in rows
         ]
 
@@ -166,9 +170,11 @@ class SearchService:
         limit: int,
     ) -> list[MarketResponse]:
         """Browse markets with exclusion filter only (no positive search query)."""
+        snap = latest_snapshot_subquery()
         stmt = (
             select(UnifiedMarket, Platform.name, Platform.slug)
             .join(Platform, Platform.id == UnifiedMarket.platform_id)
+            .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
         )
 
         filters = self._build_filters(category, platform, exclude_expired, end_date_min, end_date_max)
@@ -177,12 +183,15 @@ class SearchService:
         if filters:
             stmt = stmt.where(and_(*filters))
 
-        stmt = stmt.order_by(desc(UnifiedMarket.volume_24h)).limit(limit)
+        stmt = stmt.order_by(desc(snap.c.volume_24h).nulls_last()).limit(limit)
 
         result = await self._db.execute(stmt)
+        rows = result.all()
+
+        snap_map = await load_snap_map(self._db, [row[0].id for row in rows])
         return [
-            MarketService._to_response(row[0], row[1], row[2])
-            for row in result.all()
+            MarketService._to_response(row[0], row[1], row[2], snap=snap_map.get(row[0].id))
+            for row in rows
         ]
 
     def _build_filters(

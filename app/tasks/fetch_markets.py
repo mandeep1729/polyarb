@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.connectors.kalshi import KalshiConnector
 from app.connectors.polymarket import PolymarketConnector
 from app.database import get_background_session_factory
+from app.models.market import UnifiedMarket
 from app.models.platform import Platform
 from app.services.market_service import MarketService
 
@@ -24,6 +25,8 @@ PLATFORM_CONFIGS = {
         "api_url": "https://api.elections.kalshi.com/trade-api/v2",
     },
 }
+
+MIN_LIQUIDITY_NEW_MARKET = 10
 
 
 async def _ensure_platform(db, slug: str) -> int:
@@ -53,11 +56,28 @@ async def _fetch_polymarket(platform_id: int) -> int:
         logger.info("polymarket_fetch_done", raw_count=len(raw_markets))
 
         async with get_background_session_factory()() as db:
+            # Load existing market IDs for liquidity gate
+            existing = await db.execute(
+                select(UnifiedMarket.platform_market_id)
+                .where(UnifiedMarket.platform_id == platform_id)
+            )
+            existing_ids = {row[0] for row in existing.all()}
+
             service = MarketService(db)
             count = 0
+            skipped = 0
             for raw in raw_markets:
                 normalized = connector.normalize(raw)
                 normalized["platform_id"] = platform_id
+
+                # Gate: skip new markets with low liquidity
+                if (
+                    normalized["platform_market_id"] not in existing_ids
+                    and (normalized.get("liquidity") or 0) <= MIN_LIQUIDITY_NEW_MARKET
+                ):
+                    skipped += 1
+                    continue
+
                 await service.upsert_market(normalized)
                 count += 1
                 if count % 1000 == 0:
@@ -66,7 +86,7 @@ async def _fetch_polymarket(platform_id: int) -> int:
 
             await db.commit()
 
-        logger.info("polymarket_markets_upserted", count=count)
+        logger.info("polymarket_markets_upserted", count=count, skipped=skipped)
         return count
     except Exception as exc:
         logger.error("polymarket_fetch_failed", error=str(exc), exc_info=True)
@@ -82,11 +102,28 @@ async def _fetch_kalshi(platform_id: int) -> int:
         logger.info("kalshi_fetch_done", raw_count=len(raw_markets))
 
         async with get_background_session_factory()() as db:
+            # Load existing market IDs for liquidity gate
+            existing = await db.execute(
+                select(UnifiedMarket.platform_market_id)
+                .where(UnifiedMarket.platform_id == platform_id)
+            )
+            existing_ids = {row[0] for row in existing.all()}
+
             service = MarketService(db)
             count = 0
+            skipped = 0
             for raw in raw_markets:
                 normalized = connector.normalize(raw)
                 normalized["platform_id"] = platform_id
+
+                # Gate: skip new markets with low liquidity
+                if (
+                    normalized["platform_market_id"] not in existing_ids
+                    and (normalized.get("liquidity") or 0) <= MIN_LIQUIDITY_NEW_MARKET
+                ):
+                    skipped += 1
+                    continue
+
                 await service.upsert_market(normalized)
                 count += 1
                 if count % 1000 == 0:
@@ -95,7 +132,7 @@ async def _fetch_kalshi(platform_id: int) -> int:
 
             await db.commit()
 
-        logger.info("kalshi_markets_upserted", count=count)
+        logger.info("kalshi_markets_upserted", count=count, skipped=skipped)
         return count
     except Exception as exc:
         logger.error("kalshi_fetch_failed", error=str(exc), exc_info=True)

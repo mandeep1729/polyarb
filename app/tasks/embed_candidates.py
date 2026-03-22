@@ -26,6 +26,7 @@ from app.matching.scorer import _end_date_gate
 from app.models.market import UnifiedMarket
 from app.models.matched_market import MatchedMarketPair
 from app.models.platform import Platform
+from app.models.price_history import load_snap_map
 from app.services.embedding_service import get_qdrant
 from app.tasks.llm_candidates import build_llm_prompt
 
@@ -205,6 +206,9 @@ async def find_embedding_candidates(
         for m in res.scalars().all():
             market_data[m.id] = m
 
+    # Bulk-load latest snapshot prices
+    snap_map = await load_snap_map(db, list(market_ids_needed))
+
     candidates = []
     for c in top:
         m_a = market_data.get(c["market_a_id"])
@@ -217,14 +221,14 @@ async def find_embedding_candidates(
             "market_a_question": m_a.question,
             "market_a_platform": platform_names.get(m_a.platform_id, "unknown"),
             "market_a_outcomes": m_a.outcomes or {},
-            "market_a_outcome_prices": m_a.outcome_prices or {},
+            "market_a_outcome_prices": snap_map.get(m_a.id, {}).get("outcome_prices", {}),
             "market_a_end_date": m_a.end_date.isoformat() if m_a.end_date else None,
             "market_a_category": m_a.category,
             "market_b_id": m_b.id,
             "market_b_question": m_b.question,
             "market_b_platform": platform_names.get(m_b.platform_id, "unknown"),
             "market_b_outcomes": m_b.outcomes or {},
-            "market_b_outcome_prices": m_b.outcome_prices or {},
+            "market_b_outcome_prices": snap_map.get(m_b.id, {}).get("outcome_prices", {}),
             "market_b_end_date": m_b.end_date.isoformat() if m_b.end_date else None,
             "market_b_category": m_b.category,
             "tfidf_score": c["embedding_score"],  # reuse field for prompt compat

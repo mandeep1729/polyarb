@@ -6,6 +6,13 @@ from sqlalchemy.orm import aliased
 from app.models.market import UnifiedMarket
 from app.models.matched_market import MatchedMarketPair
 from app.models.platform import Platform
+from app.models.price_history import (
+    PriceSnapshot,
+    latest_snapshot_subquery,
+    load_snap_map,
+    snap_select_columns,
+    snap_to_dict,
+)
 from app.schemas.arbitrage import ArbitrageListResponse, ArbitrageOpportunity
 from app.schemas.market import MarketResponse
 
@@ -32,6 +39,9 @@ class ArbitrageService:
         PlatformA = aliased(Platform, flat=True)
         PlatformB = aliased(Platform, flat=True)
 
+        snap_a = latest_snapshot_subquery("snap_a")
+        snap_b = latest_snapshot_subquery("snap_b")
+
         stmt = (
             select(
                 MatchedMarketPair,
@@ -41,11 +51,15 @@ class ArbitrageService:
                 PlatformA.slug.label("platform_a_slug"),
                 PlatformB.name.label("platform_b_name"),
                 PlatformB.slug.label("platform_b_slug"),
+                *snap_select_columns(snap_a, "sa"),
+                *snap_select_columns(snap_b, "sb"),
             )
             .join(MarketA, MarketA.id == MatchedMarketPair.market_a_id)
             .join(MarketB, MarketB.id == MatchedMarketPair.market_b_id)
             .join(PlatformA, PlatformA.id == MarketA.platform_id)
             .join(PlatformB, PlatformB.id == MarketB.platform_id)
+            .outerjoin(snap_a, snap_a.c.market_id == MarketA.id)
+            .outerjoin(snap_b, snap_b.c.market_id == MarketB.id)
         )
 
         filters = []
@@ -54,16 +68,16 @@ class ArbitrageService:
         if category:
             filters.append(MatchedMarketPair.category == category)
         if hide_onesided:
-            jt_a = func.jsonb_each_text(MarketA.outcome_prices).table_valued("key", "value")
+            jt_a = func.jsonb_each_text(snap_a.c.outcome_prices).table_valued("key", "value")
             max_price_a = (
                 select(func.coalesce(func.max(cast(jt_a.c.value, Float)), 0.0))
-                .correlate(MarketA)
+                .correlate(snap_a)
                 .scalar_subquery()
             )
-            jt_b = func.jsonb_each_text(MarketB.outcome_prices).table_valued("key", "value")
+            jt_b = func.jsonb_each_text(snap_b.c.outcome_prices).table_valued("key", "value")
             max_price_b = (
                 select(func.coalesce(func.max(cast(jt_b.c.value, Float)), 0.0))
-                .correlate(MarketB)
+                .correlate(snap_b)
                 .scalar_subquery()
             )
             filters.append(max_price_a <= self.ONE_SIDED_THRESHOLD)
@@ -104,8 +118,11 @@ class ArbitrageService:
             pb_name = row[5]
             pb_slug = row[6]
 
-            market_a_resp = self._row_to_market_response(ma, pa_name, pa_slug)
-            market_b_resp = self._row_to_market_response(mb, pb_name, pb_slug)
+            snap_a_data = snap_to_dict(row, "sa")
+            snap_b_data = snap_to_dict(row, "sb")
+
+            market_a_resp = self._row_to_market_response(ma, pa_name, pa_slug, snap=snap_a_data)
+            market_b_resp = self._row_to_market_response(mb, pb_name, pb_slug, snap=snap_b_data)
 
             items.append(
                 ArbitrageOpportunity(
@@ -170,10 +187,12 @@ class ArbitrageService:
         if market_a.platform_id == market_b.platform_id:
             raise ValueError("Markets must be on different platforms")
 
-        delta = self._compute_odds_delta(
-            market_a.outcome_prices or {},
-            market_b.outcome_prices or {},
-        )
+        # Get latest prices from snapshots
+        snap_prices = await load_snap_map(self._db, [lo, hi])
+        prices_a = snap_prices.get(lo, {}).get("outcome_prices", {})
+        prices_b = snap_prices.get(hi, {}).get("outcome_prices", {})
+
+        delta = self._compute_odds_delta(prices_a, prices_b)
 
         pair = MatchedMarketPair(
             market_a_id=lo,
@@ -233,14 +252,13 @@ class ArbitrageService:
         if market_a.platform_id == market_b.platform_id:
             raise ValueError("Markets must be on different platforms")
 
-        prices_a = market_a.outcome_prices or {}
-        prices_b = market_b.outcome_prices or {}
+        # Get latest prices from snapshots
+        snap_prices = await load_snap_map(self._db, [lo, hi])
+        prices_a = snap_prices.get(lo, {}).get("outcome_prices", {})
+        prices_b = snap_prices.get(hi, {}).get("outcome_prices", {})
 
         # Use outcome mapping for correct delta if provided
         if outcome_mapping:
-            # Determine which market's IDs were used as keys in the mapping
-            # mapping is {market_a_outcome: market_b_outcome}
-            # Need to figure out if lo == market_a_id from the original input
             if market_a_id <= market_b_id:
                 mapped_a, mapped_b = prices_a, prices_b
                 mapping = outcome_mapping
@@ -296,32 +314,29 @@ class ArbitrageService:
         pairs = result.scalars().all()
         logger.info("arbitrage_update_deltas_started", total_pairs=len(pairs))
 
+        # Bulk load all latest prices
+        market_ids: set[int] = set()
+        for pair in pairs:
+            market_ids.add(pair.market_a_id)
+            market_ids.add(pair.market_b_id)
+
+        snap_prices = await load_snap_map(self._db, list(market_ids))
+
         updated_count = 0
         for pair in pairs:
-            market_a_result = await self._db.execute(
-                select(UnifiedMarket).where(UnifiedMarket.id == pair.market_a_id)
-            )
-            market_a = market_a_result.scalar_one_or_none()
+            prices_a = snap_prices.get(pair.market_a_id, {}).get("outcome_prices", {})
+            prices_b = snap_prices.get(pair.market_b_id, {}).get("outcome_prices", {})
 
-            market_b_result = await self._db.execute(
-                select(UnifiedMarket).where(UnifiedMarket.id == pair.market_b_id)
-            )
-            market_b = market_b_result.scalar_one_or_none()
-
-            if market_a is None or market_b is None:
+            if not prices_a and not prices_b:
                 logger.warning(
-                    "arbitrage_missing_market",
+                    "arbitrage_missing_prices",
                     pair_id=pair.id,
                     market_a_id=pair.market_a_id,
                     market_b_id=pair.market_b_id,
-                    market_a_missing=market_a is None,
-                    market_b_missing=market_b is None,
                 )
                 continue
 
-            delta = self._compute_odds_delta(
-                market_a.outcome_prices, market_b.outcome_prices
-            )
+            delta = self._compute_odds_delta(prices_a, prices_b)
             pair.odds_delta = delta
             self._db.add(pair)
             updated_count += 1
@@ -357,7 +372,11 @@ class ArbitrageService:
         return max_delta
 
     @staticmethod
-    def _row_to_market_response(market: UnifiedMarket, platform_name: str, platform_slug: str) -> MarketResponse:
+    def _row_to_market_response(
+        market: UnifiedMarket, platform_name: str, platform_slug: str,
+        snap: dict | None = None,
+    ) -> MarketResponse:
+        s = snap or {}
         return MarketResponse(
             id=market.id,
             platform_id=market.platform_id,
@@ -368,18 +387,21 @@ class ArbitrageService:
             description=market.description,
             category=market.category,
             outcomes=market.outcomes or {},
-            outcome_prices=market.outcome_prices or {},
-            volume_total=market.volume_total,
-            volume_24h=market.volume_24h,
-            liquidity=market.liquidity,
             start_date=market.start_date,
             end_date=market.end_date,
             status=market.status,
             resolution=market.resolution,
             deep_link_url=market.deep_link_url,
             image_url=market.image_url,
-            price_change_24h=market.price_change_24h,
-            last_synced_at=market.last_synced_at,
             created_at=market.created_at,
             updated_at=market.updated_at,
+            # Pricing from snapshot
+            outcome_prices=s.get("outcome_prices", {}),
+            volume_total=s.get("volume_total"),
+            volume_24h=s.get("volume_24h"),
+            liquidity=s.get("liquidity"),
+            yes_ask=s.get("yes_ask"),
+            no_ask=s.get("no_ask"),
+            price_change_24h=s.get("price_change_24h"),
+            last_synced_at=s.get("last_synced_at"),
         )

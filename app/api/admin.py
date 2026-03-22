@@ -53,13 +53,16 @@ async def admin_stats(db: AsyncSession = Depends(get_db)) -> dict:
         for row in platform_rows
     ]
 
-    # --- Last sync per platform ---
+    # --- Last sync per platform (from latest price snapshot) ---
+    from app.models.price_history import latest_snapshot_subquery
+    snap = latest_snapshot_subquery("admin_snap")
     sync_rows = (await db.execute(
         select(
             Platform.slug,
-            func.max(UnifiedMarket.last_synced_at).label("last_sync"),
+            func.max(snap.c.timestamp).label("last_sync"),
         )
-        .join(UnifiedMarket, UnifiedMarket.platform_id == Platform.id, isouter=True)
+        .outerjoin(UnifiedMarket, UnifiedMarket.platform_id == Platform.id)
+        .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
         .group_by(Platform.id)
     )).all()
 
@@ -68,14 +71,16 @@ async def admin_stats(db: AsyncSession = Depends(get_db)) -> dict:
         for row in sync_rows
     }
 
-    # --- Market freshness: synced within 1h / 6h / 24h / older ---
+    # --- Market freshness: snapshot within 1h / 6h / 24h / older ---
     freshness_rows = (await db.execute(
         select(
-            func.count(case((UnifiedMarket.last_synced_at >= now - timedelta(hours=1), UnifiedMarket.id))).label("h1"),
-            func.count(case((UnifiedMarket.last_synced_at >= now - timedelta(hours=6), UnifiedMarket.id))).label("h6"),
-            func.count(case((UnifiedMarket.last_synced_at >= now - timedelta(hours=24), UnifiedMarket.id))).label("h24"),
+            func.count(case((snap.c.timestamp >= now - timedelta(hours=1), UnifiedMarket.id))).label("h1"),
+            func.count(case((snap.c.timestamp >= now - timedelta(hours=6), UnifiedMarket.id))).label("h6"),
+            func.count(case((snap.c.timestamp >= now - timedelta(hours=24), UnifiedMarket.id))).label("h24"),
             func.count(UnifiedMarket.id).label("total"),
         )
+        .select_from(UnifiedMarket)
+        .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
     )).one()
 
     freshness = {

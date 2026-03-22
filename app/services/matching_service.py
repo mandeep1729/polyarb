@@ -8,6 +8,7 @@ from app.matching.scorer import score_pair
 from app.matching.text import build_tfidf_matrix, get_candidates, preprocess
 from app.models.market import UnifiedMarket
 from app.models.matched_market import MatchedMarketPair
+from app.models.price_history import latest_snapshot_subquery
 
 logger = structlog.get_logger()
 
@@ -20,11 +21,14 @@ class MatchingService:
 
     async def run_matching(self) -> int:
         now = datetime.now(timezone.utc)
+        snap = latest_snapshot_subquery()
         result = await self._db.execute(
             select(UnifiedMarket)
+            .join(snap, snap.c.market_id == UnifiedMarket.id)
             .where(UnifiedMarket.is_active.is_(True))
             .where(UnifiedMarket.status == "active")
             .where(or_(UnifiedMarket.end_date.is_(None), UnifiedMarket.end_date >= now))
+            .where(snap.c.liquidity > 0)
         )
         markets = result.scalars().all()
 

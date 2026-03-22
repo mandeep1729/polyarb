@@ -94,7 +94,6 @@ async def market(db: AsyncSession, platform: Platform) -> UnifiedMarket:
         platform_market_id="TEST-MARKET-001",
         question="Will it rain tomorrow?",
         outcomes={"Yes": "token_yes", "No": "token_no"},
-        outcome_prices={"Yes": 0.65, "No": 0.35},
     )
     db.add(m)
     await db.flush()
@@ -141,7 +140,7 @@ class TestPriceSnapshotModel:
         snap = PriceSnapshot(
             market_id=market.id,
             outcome_prices={"Yes": 0.65, "No": 0.35},
-            volume=100.0,
+            volume_24h=100.0,
         )
         db.add(snap)
         await db.flush()
@@ -191,13 +190,13 @@ class TestBulkInsert:
             {
                 "market_id": market.id,
                 "outcome_prices": {"Yes": 0.5},
-                "volume": None,
+                "volume_24h": None,
                 "timestamp": ts1,
             },
             {
                 "market_id": market.id,
                 "outcome_prices": {"Yes": 0.6},
-                "volume": None,
+                "volume_24h": None,
                 "timestamp": ts2,
             },
         ]
@@ -212,7 +211,7 @@ class TestBulkInsert:
             {
                 "market_id": market.id,
                 "outcome_prices": {"Yes": 0.5},
-                "volume": None,
+                "volume_24h": None,
                 "timestamp": ts,
             },
         ]
@@ -237,7 +236,7 @@ class TestBulkInsert:
             {
                 "market_id": market.id,
                 "outcome_prices": {"Yes": round(0.5 + (i % 50) * 0.001, 4)},
-                "volume": None,
+                "volume_24h": None,
                 "timestamp": base_ts + timedelta(hours=i),
             }
             for i in range(2500)
@@ -253,15 +252,15 @@ class TestBulkInsert:
         ts3 = datetime(2025, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
 
         rows1 = [
-            {"market_id": market.id, "outcome_prices": {"Yes": 0.5}, "volume": None, "timestamp": ts1},
-            {"market_id": market.id, "outcome_prices": {"Yes": 0.6}, "volume": None, "timestamp": ts2},
+            {"market_id": market.id, "outcome_prices": {"Yes": 0.5}, "volume_24h": None, "timestamp": ts1},
+            {"market_id": market.id, "outcome_prices": {"Yes": 0.6}, "volume_24h": None, "timestamp": ts2},
         ]
         await _bulk_insert(db, rows1)
         await db.flush()
 
         rows2 = [
-            {"market_id": market.id, "outcome_prices": {"Yes": 0.7}, "volume": None, "timestamp": ts2},
-            {"market_id": market.id, "outcome_prices": {"Yes": 0.8}, "volume": None, "timestamp": ts3},
+            {"market_id": market.id, "outcome_prices": {"Yes": 0.7}, "volume_24h": None, "timestamp": ts2},
+            {"market_id": market.id, "outcome_prices": {"Yes": 0.8}, "volume_24h": None, "timestamp": ts3},
         ]
         inserted = await _bulk_insert(db, rows2)
         assert inserted == 1

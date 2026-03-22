@@ -11,7 +11,7 @@ from app.connectors.polymarket import PolymarketConnector
 from app.database import get_background_session_factory
 from app.models.market import UnifiedMarket
 from app.models.platform import Platform
-from app.models.price_history import PriceSnapshot
+from app.models.price_history import PriceSnapshot, latest_snapshot_subquery
 
 logger = structlog.get_logger()
 
@@ -19,13 +19,15 @@ CHUNK_SIZE = 1000
 
 
 def _top_markets_query(platform_id: int, limit: int):
-    """Query top active markets by liquidity for backfill prioritization."""
+    """Query top active markets by snapshot liquidity for backfill prioritization."""
+    snap = latest_snapshot_subquery("backfill_snap")
     return (
         select(UnifiedMarket)
+        .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
         .where(UnifiedMarket.platform_id == platform_id)
         .where(UnifiedMarket.is_active.is_(True))
         .where(UnifiedMarket.status == "active")
-        .order_by(UnifiedMarket.liquidity.desc().nulls_last())
+        .order_by(snap.c.liquidity.desc().nulls_last())
         .limit(limit)
     )
 
@@ -174,7 +176,7 @@ async def _backfill_polymarket(db, platform_id: int) -> int:
                     rows.append({
                         "market_id": market.id,
                         "outcome_prices": prices,
-                        "volume": None,
+                        "volume_24h": None,
                         "timestamp": _round_to_hour(ts_key),
                     })
 
@@ -254,7 +256,7 @@ async def _backfill_kalshi(db, platform_id: int) -> int:
                 rows.append({
                     "market_id": market.id,
                     "outcome_prices": prices,
-                    "volume": None,
+                    "volume_24h": None,
                     "timestamp": _round_to_hour(int(ts)),
                 })
 

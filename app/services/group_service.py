@@ -15,7 +15,13 @@ from app.categories import resolve_category
 from app.services.search_utils import build_tsquery
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
-from app.models.price_history import PriceSnapshot
+from app.models.price_history import (
+    PriceSnapshot,
+    latest_snapshot_subquery,
+    load_snap_map,
+    snap_select_columns,
+    snap_to_dict,
+)
 from app.models.platform import Platform
 from app.schemas.common import PaginatedResponse
 from app.schemas.group import (
@@ -309,18 +315,20 @@ class GroupService:
             logger.info("group_service_group_not_found", group_id=group_id)
             return None
 
-        # Get members with platform info
+        # Get members with platform info + latest snapshot
+        snap = latest_snapshot_subquery()
         members_result = await self._db.execute(
-            select(UnifiedMarket, Platform.name, Platform.slug)
+            select(UnifiedMarket, Platform.name, Platform.slug, *snap_select_columns(snap))
             .join(MarketGroupMember, MarketGroupMember.market_id == UnifiedMarket.id)
             .join(Platform, Platform.id == UnifiedMarket.platform_id)
+            .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
             .where(MarketGroupMember.group_id == group_id)
-            .order_by(desc(UnifiedMarket.liquidity).nulls_last())
+            .order_by(desc(snap.c.liquidity).nulls_last())
         )
         member_rows = members_result.all()
 
         members = [
-            self._to_market_response(row[0], row[1], row[2])
+            self._to_market_response(row[0], row[1], row[2], snap=snap_to_dict(row))
             for row in member_rows
         ]
 
@@ -363,7 +371,7 @@ class GroupService:
                     ),
                     else_=None,
                 ).label("disagreement_score"),
-                func.sum(PriceSnapshot.volume).label("total_volume"),
+                func.sum(PriceSnapshot.volume_24h).label("total_volume"),
             )
             .join(
                 MarketGroupMember,
@@ -393,21 +401,25 @@ class GroupService:
 
     async def _get_market_response(self, market_id: int) -> MarketResponse | None:
         """Fetch a single market with platform info as MarketResponse."""
+        snap = latest_snapshot_subquery()
         result = await self._db.execute(
-            select(UnifiedMarket, Platform.name, Platform.slug)
+            select(UnifiedMarket, Platform.name, Platform.slug, *snap_select_columns(snap))
             .join(Platform, Platform.id == UnifiedMarket.platform_id)
+            .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
             .where(UnifiedMarket.id == market_id)
         )
         row = result.one_or_none()
         if row is None:
             return None
-        return self._to_market_response(row[0], row[1], row[2])
+        return self._to_market_response(row[0], row[1], row[2], snap=snap_to_dict(row))
 
     @staticmethod
     def _to_market_response(
-        market: UnifiedMarket, platform_name: str, platform_slug: str
+        market: UnifiedMarket, platform_name: str, platform_slug: str,
+        snap: dict | None = None,
     ) -> MarketResponse:
         """Convert a UnifiedMarket + platform info to MarketResponse."""
+        s = snap or {}
         return MarketResponse(
             id=market.id,
             platform_id=market.platform_id,
@@ -419,21 +431,22 @@ class GroupService:
             category=market.category,
             event_ticker=market.event_ticker,
             series_ticker=market.series_ticker,
-            yes_ask=market.yes_ask,
-            no_ask=market.no_ask,
             outcomes=market.outcomes,
-            outcome_prices=market.outcome_prices,
-            volume_total=market.volume_total,
-            volume_24h=market.volume_24h,
-            liquidity=market.liquidity,
             start_date=market.start_date,
             end_date=market.end_date,
             status=market.status,
             resolution=market.resolution,
             deep_link_url=market.deep_link_url,
             image_url=market.image_url,
-            price_change_24h=market.price_change_24h,
-            last_synced_at=market.last_synced_at,
             created_at=market.created_at,
             updated_at=market.updated_at,
+            # Pricing from snapshot
+            outcome_prices=s.get("outcome_prices", {}),
+            volume_total=s.get("volume_total"),
+            volume_24h=s.get("volume_24h"),
+            liquidity=s.get("liquidity"),
+            yes_ask=s.get("yes_ask"),
+            no_ask=s.get("no_ask"),
+            price_change_24h=s.get("price_change_24h"),
+            last_synced_at=s.get("last_synced_at"),
         )

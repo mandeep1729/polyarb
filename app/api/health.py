@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.models.market import UnifiedMarket
+from app.models.price_history import PriceSnapshot
 
 logger = structlog.get_logger()
 
@@ -25,7 +26,7 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
         total_markets = count_result.scalar_one()
 
         sync_result = await db.execute(
-            select(func.max(UnifiedMarket.last_synced_at))
+            select(func.max(PriceSnapshot.timestamp))
         )
         last_sync = sync_result.scalar_one()
     except Exception as exc:

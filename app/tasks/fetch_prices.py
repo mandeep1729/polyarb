@@ -17,7 +17,7 @@ from app.database import get_background_session_factory
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
 from app.models.platform import Platform
-from app.models.price_history import PriceSnapshot
+from app.models.price_history import PriceSnapshot, latest_snapshot_subquery
 from app.utils import first_float as _first_float
 
 logger = structlog.get_logger()
@@ -37,14 +37,20 @@ async def _upsert_snapshots(db, rows: list[dict]) -> int:
     total = 0
     for i in range(0, len(rows), SNAPSHOT_CHUNK):
         chunk = rows[i : i + SNAPSHOT_CHUNK]
+        excluded = pg_insert(PriceSnapshot.__table__).excluded
         stmt = (
             pg_insert(PriceSnapshot.__table__)
             .values(chunk)
             .on_conflict_do_update(
                 constraint="uq_price_snapshots_market_ts",
                 set_={
-                    "outcome_prices": pg_insert(PriceSnapshot.__table__).excluded.outcome_prices,
-                    "volume": pg_insert(PriceSnapshot.__table__).excluded.volume,
+                    "outcome_prices": excluded.outcome_prices,
+                    "volume_24h": excluded.volume_24h,
+                    "volume_total": excluded.volume_total,
+                    "liquidity": excluded.liquidity,
+                    "yes_ask": excluded.yes_ask,
+                    "no_ask": excluded.no_ask,
+                    "price_change_24h": excluded.price_change_24h,
                 },
             )
         )
@@ -101,9 +107,11 @@ async def _count_active(db, platform_id: int, market_ids: set[int] | None = None
 async def _load_batch(
     db, platform_id: int, offset: int, limit: int, market_ids: set[int] | None = None
 ) -> list:
-    """Load a batch of active markets ordered by liquidity."""
+    """Load a batch of active markets ordered by snapshot liquidity."""
+    snap = latest_snapshot_subquery()
     stmt = (
         select(UnifiedMarket)
+        .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
         .where(
             UnifiedMarket.platform_id == platform_id,
             UnifiedMarket.is_active.is_(True),
@@ -112,8 +120,38 @@ async def _load_batch(
     )
     if market_ids is not None:
         stmt = stmt.where(UnifiedMarket.id.in_(market_ids))
-    stmt = stmt.order_by(UnifiedMarket.liquidity.desc().nulls_last()).offset(offset).limit(limit)
+    stmt = stmt.order_by(snap.c.liquidity.desc().nulls_last()).offset(offset).limit(limit)
     return (await db.execute(stmt)).scalars().all()
+
+
+async def _load_latest_snapshots(db, market_ids: list[int]) -> dict[int, dict]:
+    """Load latest snapshot for each market as a dict keyed by market_id."""
+    if not market_ids:
+        return {}
+    snap = latest_snapshot_subquery("old_snap")
+    result = await db.execute(
+        select(
+            snap.c.market_id,
+            snap.c.outcome_prices,
+            snap.c.volume_24h,
+            snap.c.volume_total,
+            snap.c.liquidity,
+            snap.c.yes_ask,
+            snap.c.no_ask,
+        )
+        .where(snap.c.market_id.in_(market_ids))
+    )
+    return {
+        row[0]: {
+            "outcome_prices": row[1] or {},
+            "volume_24h": row[2],
+            "volume_total": row[3],
+            "liquidity": row[4],
+            "yes_ask": row[5],
+            "no_ask": row[6],
+        }
+        for row in result.all()
+    }
 
 
 async def _update_polymarket_batch(db, markets: list, connector: PolymarketConnector) -> int:
@@ -143,38 +181,41 @@ async def _update_polymarket_batch(db, markets: list, connector: PolymarketConne
             continue
         market_prices.setdefault(market.id, {})[outcome_name] = round(price_val, 4)
 
+    # Load old snapshots for price_change computation
+    old_snaps = await _load_latest_snapshots(db, list(market_prices.keys()))
+
     ts = _hour_now()
     snapshot_rows: list[dict] = []
-    market_by_id = {m.id: m for m in markets}
 
     for market_id, prices in market_prices.items():
-        market = market_by_id[market_id]
-        old_prices = market.outcome_prices or {}
-        market.outcome_prices = prices
-        market.last_synced_at = datetime.now(timezone.utc)
+        old = old_snaps.get(market_id, {})
+        old_prices = old.get("outcome_prices", {})
 
+        price_change_24h = None
         if old_prices:
             first_old = next(iter(old_prices.values()), None)
             first_new = next(iter(prices.values()), None)
             if first_old is not None and first_new is not None:
                 try:
-                    market.price_change_24h = float(first_new) - float(first_old)
+                    price_change_24h = float(first_new) - float(first_old)
                 except (ValueError, TypeError) as exc:
                     logger.warning(
                         "price_change_parse_error",
-                        market_id=market.id,
+                        market_id=market_id,
                         old=first_old,
                         new=first_new,
                         error=str(exc),
                     )
 
         snapshot_rows.append({
-            "market_id": market.id,
+            "market_id": market_id,
             "outcome_prices": prices,
-            "volume": market.volume_24h,
+            "volume_24h": old.get("volume_24h"),
+            "volume_total": old.get("volume_total"),
+            "liquidity": old.get("liquidity"),
+            "price_change_24h": price_change_24h,
             "timestamp": ts,
         })
-        db.add(market)
 
     return await _upsert_snapshots(db, snapshot_rows)
 
@@ -189,6 +230,9 @@ async def _update_kalshi_batch(db, markets: list, connector: KalshiConnector) ->
         ticker = pd_item.get("ticker", "")
         if ticker:
             price_map[ticker] = pd_item
+
+    # Load old snapshots for price_change computation
+    old_snaps = await _load_latest_snapshots(db, [m.id for m in markets])
 
     ts = _hour_now()
     snapshot_rows: list[dict] = []
@@ -206,34 +250,32 @@ async def _update_kalshi_batch(db, markets: list, connector: KalshiConnector) ->
         if no_bid is not None:
             prices["No"] = round(no_bid, 4)
 
-        old_prices = market.outcome_prices or {}
-        market.outcome_prices = prices
-        market.last_synced_at = datetime.now(timezone.utc)
-
         ya = _first_float(raw, "yes_ask", "yes_ask_dollars")
         na = _first_float(raw, "no_ask", "no_ask_dollars")
-        if ya is not None:
-            market.yes_ask = ya
-        if na is not None:
-            market.no_ask = na
 
+        old = old_snaps.get(market.id, {})
+        old_prices = old.get("outcome_prices", {})
+
+        price_change_24h = None
         if old_prices and prices:
             old_yes = old_prices.get("Yes")
             new_yes = prices.get("Yes")
             if old_yes is not None and new_yes is not None:
-                market.price_change_24h = new_yes - old_yes
+                price_change_24h = new_yes - old_yes
 
         vol_24h = _first_float(raw, "volume_24h", "volume_24h_fp")
-        if vol_24h is not None:
-            market.volume_24h = vol_24h
 
         snapshot_rows.append({
             "market_id": market.id,
             "outcome_prices": prices,
-            "volume": market.volume_24h,
+            "volume_24h": vol_24h if vol_24h is not None else old.get("volume_24h"),
+            "volume_total": old.get("volume_total"),
+            "liquidity": old.get("liquidity"),
+            "yes_ask": ya if ya is not None else old.get("yes_ask"),
+            "no_ask": na if na is not None else old.get("no_ask"),
+            "price_change_24h": price_change_24h,
             "timestamp": ts,
         })
-        db.add(market)
 
     return await _upsert_snapshots(db, snapshot_rows)
 

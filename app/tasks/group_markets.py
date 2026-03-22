@@ -9,7 +9,7 @@ Two entry points:
 - run_full_grouping(): exhaustive cross-platform merge (every 2 hours)
 """
 import structlog
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
@@ -18,6 +18,7 @@ from app.matching.scorer import _end_date_gate, score_pair
 from app.matching.text import build_tfidf_matrix, get_candidates, preprocess
 from app.models.market import UnifiedMarket
 from app.models.market_group import MarketGroup, MarketGroupMember
+from app.models.price_history import latest_snapshot_subquery
 
 logger = structlog.get_logger()
 
@@ -62,17 +63,19 @@ async def _load_group_representatives(db, group_ids: list[int]) -> dict[int, dic
             reps.setdefault(gid, {})["end_date"] = end_date
 
         # Get description from highest-liquidity member per group
-        # Use DISTINCT ON (group_id) ordered by liquidity DESC
+        # Use DISTINCT ON (group_id) ordered by snapshot liquidity DESC
+        snap = latest_snapshot_subquery("rep_snap")
         desc_result = await db.execute(
             select(
                 MarketGroupMember.group_id,
                 UnifiedMarket.description,
             )
             .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+            .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
             .where(MarketGroupMember.group_id.in_(batch_ids))
             .order_by(
                 MarketGroupMember.group_id,
-                UnifiedMarket.liquidity.desc().nulls_last(),
+                desc(snap.c.liquidity).nulls_last(),
             )
             .distinct(MarketGroupMember.group_id)
         )
@@ -165,7 +168,7 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
     """Mini merge: try to slot newly-seeded groups into existing cross-platform groups.
 
     Only compares groups containing the given market_ids against all other groups.
-    This is O(new × existing) instead of O(all²).
+    This is O(new x existing) instead of O(all^2).
     """
     threshold = settings.GROUP_MERGE_THRESHOLD
 
@@ -196,7 +199,7 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
     all_group_ids = [g.id for g in new_groups] + [g.id for g in existing_groups]
     reps = await _load_group_representatives(db, all_group_ids)
 
-    # Bulk load group→platform mapping
+    # Bulk load group->platform mapping
     platform_result = await db.execute(
         select(
             MarketGroupMember.group_id,
@@ -220,8 +223,8 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
     all_descs = []
     for g in list(new_groups) + list(existing_groups):
         rep = reps.get(g.id, {})
-        desc = rep.get("description") or ""
-        all_descs.append(preprocess(desc) if desc else "")
+        desc_text = rep.get("description") or ""
+        all_descs.append(preprocess(desc_text) if desc_text else "")
 
     has_descs = any(d for d in all_descs)
     desc_tfidf_matrix = None
@@ -296,7 +299,7 @@ async def _phase2_assign_to_existing_groups(db, market_ids: set[int]) -> int:
         idx_existing, composite, _ = best_match
         g_existing = existing_groups[idx_existing]
 
-        # Merge: move members from new group → existing group
+        # Merge: move members from new group -> existing group
         members_new = await db.execute(
             select(MarketGroupMember.market_id).where(
                 MarketGroupMember.group_id == g_new.id
@@ -344,7 +347,7 @@ async def _phase2_merge_cross_platform(db) -> int:
     """
     threshold = settings.GROUP_MERGE_THRESHOLD
 
-    # Bulk load group→platform mapping via a single query
+    # Bulk load group->platform mapping via a single query
     result = await db.execute(
         select(
             MarketGroupMember.group_id,
@@ -398,8 +401,8 @@ async def _phase2_merge_cross_platform(db) -> int:
             all_descs = []
             for g in combined_groups:
                 rep = reps.get(g.id, {})
-                desc = rep.get("description") or ""
-                all_descs.append(preprocess(desc) if desc else "")
+                desc_text = rep.get("description") or ""
+                all_descs.append(preprocess(desc_text) if desc_text else "")
 
             has_descs = any(d for d in all_descs)
             desc_tfidf_matrix = None
@@ -516,19 +519,40 @@ async def _phase3_compute_analytics(db) -> int:
     )
     groups = result.scalars().all()
 
-    # Bulk load all members with their market data (batched to avoid param limit)
+    # Bulk load all members with their market data + latest snapshot
     group_ids = [g.id for g in groups]
-    group_members: dict[int, list] = {}
+    group_members: dict[int, list[tuple]] = {}  # gid -> [(market, snap_data), ...]
     batch_size = 5000
+
+    snap = latest_snapshot_subquery("analytics_snap")
+
     for i in range(0, len(group_ids), batch_size):
         batch_ids = group_ids[i:i + batch_size]
         batch_result = await db.execute(
-            select(MarketGroupMember.group_id, UnifiedMarket)
+            select(
+                MarketGroupMember.group_id,
+                UnifiedMarket,
+                snap.c.outcome_prices.label("snap_outcome_prices"),
+                snap.c.liquidity.label("snap_liquidity"),
+                snap.c.volume_24h.label("snap_volume_24h"),
+                snap.c.yes_ask.label("snap_yes_ask"),
+                snap.c.no_ask.label("snap_no_ask"),
+            )
             .join(UnifiedMarket, UnifiedMarket.id == MarketGroupMember.market_id)
+            .outerjoin(snap, snap.c.market_id == UnifiedMarket.id)
             .where(MarketGroupMember.group_id.in_(batch_ids))
         )
-        for gid, market in batch_result.all():
-            group_members.setdefault(gid, []).append(market)
+        for row in batch_result.all():
+            gid = row[0]
+            market = row[1]
+            snap_data = {
+                "outcome_prices": row.snap_outcome_prices or {},
+                "liquidity": row.snap_liquidity,
+                "volume_24h": row.snap_volume_24h,
+                "yes_ask": row.snap_yes_ask,
+                "no_ask": row.snap_no_ask,
+            }
+            group_members.setdefault(gid, []).append((market, snap_data))
 
     updated = 0
     for group in groups:
@@ -552,10 +576,10 @@ async def _phase3_compute_analytics(db) -> int:
         best_no_price = float("inf")
         best_no_id: int | None = None
 
-        for m in members:
-            prices = m.outcome_prices or {}
-            liq = m.liquidity or 0.0
-            total_vol += m.volume_24h or 0.0
+        for m, snap_data in members:
+            prices = snap_data.get("outcome_prices", {})
+            liq = snap_data.get("liquidity") or 0.0
+            total_vol += snap_data.get("volume_24h") or 0.0
             total_liq += liq
 
             yes_p = prices.get("Yes")
@@ -571,14 +595,14 @@ async def _phase3_compute_analytics(db) -> int:
                 no_prices.append((float(no_p), m.id))
 
             # Best odds: lowest ask prices
-            yes_ask = m.yes_ask
+            yes_ask = snap_data.get("yes_ask")
             if yes_ask is None:
                 yes_ask = float(yes_p) if yes_p is not None else None
             if yes_ask is not None and yes_ask < best_yes_price:
                 best_yes_price = yes_ask
                 best_yes_id = m.id
 
-            no_ask = m.no_ask
+            no_ask = snap_data.get("no_ask")
             if no_ask is None:
                 no_ask = float(no_p) if no_p is not None else None
             if no_ask is not None and no_ask < best_no_price:
@@ -607,7 +631,7 @@ async def _phase3_compute_analytics(db) -> int:
 
         # Propagate majority member category to groups with NULL category
         if not group.category:
-            member_cats = [m.category for m in members if m.category]
+            member_cats = [m.category for m, _ in members if m.category]
             if member_cats:
                 from collections import Counter
                 group.category = Counter(member_cats).most_common(1)[0][0]
