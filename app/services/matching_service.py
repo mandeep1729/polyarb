@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
+
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.matching.scorer import score_pair
@@ -17,10 +19,12 @@ class MatchingService:
         self._db = db
 
     async def run_matching(self) -> int:
+        now = datetime.now(timezone.utc)
         result = await self._db.execute(
             select(UnifiedMarket)
             .where(UnifiedMarket.is_active.is_(True))
             .where(UnifiedMarket.status == "active")
+            .where(or_(UnifiedMarket.end_date.is_(None), UnifiedMarket.end_date >= now))
         )
         markets = result.scalars().all()
 
